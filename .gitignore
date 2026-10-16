@@ -3,3 +3,9 @@ data/views.json
 .env
 .DS_Store
 Thumbs.db
+deploy_key*
+id_ed25519*
+id_rsa*
+*.pem
+*.key
+

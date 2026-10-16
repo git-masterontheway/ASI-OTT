@@ -35,13 +35,37 @@
 </head>
 <body>
 
+  <!-- CINEMATIC OPENING WEBSITE SPLASH SCREEN (Shown Once on Opening Website) -->
+  <div class="site-splash-screen" id="site-splash-screen">
+    <div class="splash-ambient-bg"></div>
+    <div class="splash-container">
+      <div class="splash-logo-box">
+        <div class="splash-glow-aura"></div>
+        <img src="/logo.png" alt="ASI OTT" class="splash-logo-img">
+      </div>
+      <div class="splash-meta">
+        <div class="splash-stream-badges">
+          <span>4K UHD</span>
+          <span class="dot">&bull;</span>
+          <span>MULTI-AUDIO</span>
+          <span class="dot">&bull;</span>
+          <span>DIRECT CLOUD</span>
+        </div>
+        <div class="splash-bar-outer">
+          <div class="splash-bar-inner" id="splash-bar-inner"></div>
+        </div>
+        <div class="splash-sub-note">INITIALIZING ASI OTT STREAMING...</div>
+      </div>
+    </div>
+  </div>
+
   <!-- 1. Top Navigation Bar (Redesigned Creative Header) -->
   <header class="navbar">
     <div class="nav-container">
       <div class="brand-wrapper">
         <a href="/" class="brand-logo" id="home-link">
-          <i class="fa-solid fa-play-circle brand-highlight"></i>
-          <span>ASI<span class="brand-highlight">OTT</span></span>
+          <img src="/logo.png" alt="ASI OTT" class="navbar-brand-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex'">
+          <span style="display: none;"><i class="fa-solid fa-play-circle brand-highlight"></i> ASI<span class="brand-highlight">OTT</span></span>
         </a>
       </div>
 
@@ -59,30 +83,49 @@
   <!-- 2. Dedicated Sub-Header for Search & Category Menu -->
   <section class="sub-header-bar">
     <div class="sub-header-container">
-      <!-- Search Input Field & Dedicated Button -->
+      <!-- Search Input Field with Integrated Category Filter Dropdown -->
       <form class="search-form-wrapper" id="search-form" onsubmit="return false;">
-        <div class="search-input-group">
-          <i class="fa-solid fa-magnifying-glass search-input-icon"></i>
-          <input 
-            type="text" 
-            id="search-input" 
-            class="search-input-field" 
-            placeholder="Search all content (e.g. Drishyam, Toxic, Dramas)..." 
-            autocomplete="off"
-          >
-          <button type="button" id="search-clear-btn" class="search-clear-btn" title="Clear search" style="display: none;">
-            <i class="fa-solid fa-xmark"></i>
+        <div class="search-bar-unified">
+          <!-- Category Filter Dropdown with Arrow Function -->
+          <div class="search-category-dropdown" id="search-category-dropdown">
+            <i class="fa-solid fa-sliders dropdown-filter-icon"></i>
+            <select id="search-category-select" class="search-category-select" aria-label="Select Content Category">
+              <option value="all">All</option>
+              <option value="mini_drama">Mini Drama</option>
+              <option value="movies">Movies</option>
+              <option value="tv_shows">TV Shows</option>
+              <option value="web_series">Web Series</option>
+            </select>
+            <i class="fa-solid fa-chevron-down dropdown-arrow-icon"></i>
+          </div>
+
+          <div class="search-bar-divider"></div>
+
+          <!-- Search Input Field -->
+          <div class="search-input-group">
+            <i class="fa-solid fa-magnifying-glass search-input-icon"></i>
+            <input 
+              type="text" 
+              id="search-input" 
+              class="search-input-field" 
+              placeholder="Search content, movies, series, dramas..." 
+              autocomplete="off"
+            >
+            <button type="button" id="search-clear-btn" class="search-clear-btn" title="Clear search" style="display: none;">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <button type="submit" id="search-submit-btn" class="btn btn-search-submit" title="Execute Search">
+            <i class="fa-solid fa-magnifying-glass"></i> <span>Search</span>
           </button>
         </div>
-        <button type="submit" id="search-submit-btn" class="btn btn-search-submit" title="Execute Search">
-          <i class="fa-solid fa-magnifying-glass"></i> <span>Search</span>
-        </button>
       </form>
 
-      <!-- Naturally Swipeable Category Menu (No Slider Toggle Needed) -->
+      <!-- Naturally Swipeable Category Menu -->
       <div class="category-tabs-wrapper" id="category-tabs">
         <button class="cat-tab active" data-category="all">
-          <i class="fa-solid fa-border-all"></i> All Content
+          <i class="fa-solid fa-border-all"></i> All
         </button>
         <button class="cat-tab" data-category="mini_drama">
           <i class="fa-solid fa-mobile-screen"></i> Mini Drama
@@ -90,8 +133,11 @@
         <button class="cat-tab" data-category="movies">
           <i class="fa-solid fa-film"></i> Movies
         </button>
+        <button class="cat-tab" data-category="tv_shows">
+          <i class="fa-solid fa-tv"></i> TV Shows
+        </button>
         <button class="cat-tab" data-category="web_series">
-          <i class="fa-solid fa-tv"></i> Web Series
+          <i class="fa-solid fa-layer-group"></i> Web Series
         </button>
       </div>
     </div>
@@ -107,7 +153,6 @@
       <div class="hero-content">
         <div class="hero-badge-group">
           <span class="badge badge-featured"><i class="fa-solid fa-star"></i> Featured Release</span>
-          <span class="badge badge-source" id="hero-source">MicroTV</span>
           <span class="badge badge-tag" id="hero-category">Dramas</span>
           <span class="badge badge-views" id="hero-views"><i class="fa-solid fa-eye"></i> 2.9k views</span>
         </div>
@@ -128,11 +173,11 @@
 
     <!-- Content Section Header & Filter Controls -->
     <section class="section-header" id="series-section">
-      <div>
+      <div class="section-title-wrapper">
         <h2 class="section-title" id="section-heading">
-          <i class="fa-solid fa-bolt"></i> Aggregated Latest Releases
+          <i class="fa-solid fa-bolt"></i> LATEST RELEASES
         </h2>
-        <span class="items-counter" id="items-counter">Loading content from all sources...</span>
+        <span class="items-counter" id="items-counter" style="display: none;"></span>
       </div>
 
       <!-- Quick Sorting Filter Chips -->
@@ -145,9 +190,16 @@
 
     <!-- Unified Multi-Source Card Grid -->
     <div class="series-grid" id="series-grid">
-      <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem;">
-        <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2.5rem; color: var(--accent-primary); margin-bottom: 1rem;"></i>
-        <p style="color: var(--text-muted); font-size: 1.05rem;">Aggregating content from MicroTV, Movies4u & HDWall...</p>
+      <div class="grid-logo-loader-container">
+        <div class="grid-logo-loader">
+          <div class="gll-logo-wrapper">
+            <div class="gll-glow-halo"></div>
+            <img src="/logo.png" alt="Loading" class="gll-logo-img">
+          </div>
+          <div class="gll-bar-track">
+            <div class="gll-bar-fill"></div>
+          </div>
+        </div>
       </div>
     </div>
 

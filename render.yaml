@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: asi-ott
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_DOMAIN
+        value: https://asiott.xo.je

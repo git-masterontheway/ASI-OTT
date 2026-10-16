@@ -4,9 +4,7 @@
  * Directly connects to Vercel backend when hosted on custom domain (asiott.xo.je).
  */
 const VERCEL_BACKEND = 'https://asiott.vercel.app';
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? (window.location.port === '3000' ? 'http://localhost:3001' : '')
-  : VERCEL_BACKEND;
+const API_BASE = '';
 
 /**
  * Resilient API Fetch Helper:
@@ -58,6 +56,7 @@ const searchInput = document.getElementById('search-input');
 const searchClearBtn = document.getElementById('search-clear-btn');
 const searchSubmitBtn = document.getElementById('search-submit-btn');
 const searchForm = document.getElementById('search-form');
+const searchCategorySelect = document.getElementById('search-category-select');
 const itemsCounter = document.getElementById('items-counter');
 const sectionHeading = document.getElementById('section-heading');
 const heroSpotlight = document.getElementById('hero-spotlight');
@@ -102,14 +101,24 @@ function showToast(message, type = 'info') {
 async function loadContentPage(page = 1, isInitial = false) {
   currentPage = page;
   
-  // Show loading indicator
+  // Show logo loading indicator (uploaded logo animation, zero aggregating text)
   seriesGrid.innerHTML = `
-    <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem;">
-      <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2.5rem; color: var(--accent-primary); margin-bottom: 1rem;"></i>
-      <p style="color: var(--text-muted); font-size: 1.05rem;">Aggregating titles from MicroTV, Movies4u & HDWall...</p>
+    <div class="grid-logo-loader-container">
+      <div class="grid-logo-loader">
+        <div class="gll-logo-wrapper">
+          <div class="gll-glow-halo"></div>
+          <img src="/logo.png" alt="Loading" class="gll-logo-img">
+        </div>
+        <div class="gll-bar-track">
+          <div class="gll-bar-fill"></div>
+        </div>
+      </div>
     </div>
   `;
-  itemsCounter.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> Loading sources...`;
+  if (itemsCounter) {
+    itemsCounter.textContent = '';
+    itemsCounter.style.display = 'none';
+  }
 
   try {
     const params = new URLSearchParams();
@@ -141,15 +150,19 @@ async function loadContentPage(page = 1, isInitial = false) {
     renderSeriesGrid(allItems);
     renderPagination(currentPagination);
 
-    // Update Section Headings & Counter
-    const catLabel = currentCategory !== 'all' ? ` in ${currentCategory.toUpperCase().replace('_', ' ')}` : '';
+    // Update Section Headings: Clean LATEST RELEASES without referer or aggregating subtitles
     if (currentSearchQuery) {
-      sectionHeading.innerHTML = `<i class="fa-solid fa-magnifying-glass"></i> Search Results for "${currentSearchQuery}"${catLabel}`;
-      const srcMeta = data.sources ? ` (MicroTV: ${data.sources.microtv}, Movies4u: ${data.sources.movies4u}, HDWall: ${data.sources.hdwall})` : '';
-      itemsCounter.textContent = `Found ${allItems.length} matching titles across all sources${srcMeta}`;
+      sectionHeading.innerHTML = `<i class="fa-solid fa-magnifying-glass"></i> Search Results for "${currentSearchQuery}"`;
+      if (itemsCounter) {
+        itemsCounter.textContent = `${allItems.length} titles found`;
+        itemsCounter.style.display = 'inline-block';
+      }
     } else {
-      sectionHeading.innerHTML = `<i class="fa-solid fa-bolt"></i> Aggregated Latest Releases${catLabel}`;
-      itemsCounter.textContent = `Displaying ${allItems.length} releases from MicroTV, Movies4u & HDWall`;
+      sectionHeading.innerHTML = `<i class="fa-solid fa-bolt"></i> LATEST RELEASES`;
+      if (itemsCounter) {
+        itemsCounter.textContent = '';
+        itemsCounter.style.display = 'none';
+      }
     }
 
     // Update Browser Query URL
@@ -207,7 +220,9 @@ function setupHeroSpotlight(item) {
   
   const catLabel = item.category || 'Mini Drama';
   if (heroCategory) heroCategory.textContent = catLabel;
-  if (heroSource) heroSource.style.display = 'none'; // Source masked
+  if (heroSource) {
+    heroSource.style.display = 'none'; // Referer tag removed as requested
+  }
 
   const watchUrl = `/watch.html?id=${encodeURIComponent(item.id || item.slug)}&source=${encodeURIComponent(item.source || 'MicroTV')}`;
   heroWatchBtn.href = watchUrl;
@@ -260,7 +275,7 @@ function renderSeriesGrid(items) {
           >
           <div class="poster-gradient"></div>
           
-          <!-- Casual Category Tag (Source Masked) -->
+          <!-- Category Badge (No Referer Tag) -->
           <div class="card-badges-top">
             <span class="category-badge badge-${catClass}">${catLabel}</span>
           </div>
@@ -382,13 +397,36 @@ searchClearBtn.addEventListener('click', () => {
   triggerSearch(true);
 });
 
+// Search Bar Category Filter Dropdown
+if (searchCategorySelect) {
+  searchCategorySelect.addEventListener('change', () => {
+    currentCategory = searchCategorySelect.value;
+    categoryTabs.forEach(t => {
+      if (t.dataset.category === currentCategory) t.classList.add('active');
+      else t.classList.remove('active');
+    });
+    if (searchInput && searchInput.value.trim()) {
+      triggerSearch(true);
+    } else {
+      loadContentPage(1);
+    }
+  });
+}
+
 // Category Tab Filtering
 categoryTabs.forEach(tab => {
   tab.addEventListener('click', () => {
     categoryTabs.forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
-    currentCategory = tab.dataset.category;
-    loadContentPage(1);
+    currentCategory = tab.dataset.category || 'all';
+    if (searchCategorySelect) {
+      searchCategorySelect.value = currentCategory;
+    }
+    if (searchInput && searchInput.value.trim()) {
+      triggerSearch(true);
+    } else {
+      loadContentPage(1);
+    }
   });
 });
 
@@ -422,6 +460,10 @@ window.addEventListener('popstate', (e) => {
   currentSearchQuery = urlParams.get('q') || '';
   if (searchInput) searchInput.value = currentSearchQuery;
 
+  if (searchCategorySelect) {
+    searchCategorySelect.value = currentCategory;
+  }
+
   // Set active tab
   categoryTabs.forEach(t => {
     if (t.dataset.category === currentCategory) t.classList.add('active');
@@ -431,8 +473,43 @@ window.addEventListener('popstate', (e) => {
   loadContentPage(currentPage, true);
 });
 
+// Cinematic Opening Website Splash Screen (Plays once per browser session)
+function initSplashScreen() {
+  const splash = document.getElementById('site-splash-screen');
+  if (!splash) return;
+
+  const hasSeen = sessionStorage.getItem('asi_splash_opened');
+  if (hasSeen) {
+    splash.style.display = 'none';
+    return;
+  }
+
+  sessionStorage.setItem('asi_splash_opened', 'true');
+
+  const dismissSplash = () => {
+    if (splash.classList.contains('splash-exit')) return;
+    splash.classList.add('splash-exit');
+    setTimeout(() => {
+      splash.style.display = 'none';
+    }, 550);
+  };
+
+  // Auto dismiss after animation completes (1.6s)
+  setTimeout(dismissSplash, 1600);
+
+  // Fast skip if user taps or presses any key
+  splash.addEventListener('click', dismissSplash);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') {
+      dismissSplash();
+    }
+  }, { once: true });
+}
+
 // Initialize on DOM Ready
 document.addEventListener('DOMContentLoaded', () => {
+  initSplashScreen();
+
   const yearEl = document.getElementById('current-year');
   if (yearEl) {
     yearEl.textContent = new Date().getFullYear();
@@ -446,6 +523,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (searchInput && currentSearchQuery) {
     searchInput.value = currentSearchQuery;
     searchClearBtn.style.display = 'block';
+  }
+
+  if (searchCategorySelect) {
+    searchCategorySelect.value = currentCategory;
   }
 
   categoryTabs.forEach(t => {

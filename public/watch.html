@@ -43,8 +43,8 @@
     <div class="nav-container">
       <div class="brand-wrapper">
         <a href="/" class="brand-logo">
-          <i class="fa-solid fa-play-circle brand-highlight"></i>
-          <span>ASI<span class="brand-highlight">OTT</span></span>
+          <img src="/logo.png" alt="ASI OTT" class="navbar-brand-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex'">
+          <span style="display: none;"><i class="fa-solid fa-play-circle brand-highlight"></i> ASI<span class="brand-highlight">OTT</span></span>
         </a>
       </div>
 
@@ -114,6 +114,25 @@
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
           referrerpolicy="no-referrer-when-downgrade"
         ></iframe>
+
+        <!-- BRANDED VIDEO LOADING ANIMATION (Uploaded Logo in Player) -->
+        <div class="player-video-loading" id="player-video-loading">
+          <div class="pvl-content">
+            <div class="pvl-logo-wrapper">
+              <div class="pvl-glow-halo"></div>
+              <img src="/logo.png" alt="ASI OTT" class="pvl-logo-img">
+            </div>
+            <div class="pvl-progress-ring">
+              <div class="pvl-bar-track">
+                <div class="pvl-bar-fill"></div>
+              </div>
+            </div>
+            <div class="pvl-status">
+              <span class="pvl-title" id="pvl-status-title">Loading Video Stream...</span>
+              <span class="pvl-subtitle" id="pvl-status-subtitle">Connecting to high-speed CDN</span>
+            </div>
+          </div>
+        </div>
 
         <!-- Custom Player Overlay Controls -->
         <div class="player-controls-overlay" id="player-controls-overlay">

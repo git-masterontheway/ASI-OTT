@@ -1,8 +1,11 @@
 {
   "name": "asi-ott",
   "version": "1.0.0",
-  "description": "ASI OTT - Internal Testing Frontend and Video Delivery System",
+  "description": "ASI OTT - Multi-Source Content Aggregation & Video Delivery System",
   "main": "server.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"

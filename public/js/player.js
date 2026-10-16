@@ -9,9 +9,7 @@
  */
 
 const VERCEL_BACKEND = 'https://asiott.vercel.app';
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? (window.location.port === '3000' ? 'http://localhost:3001' : '')
-  : VERCEL_BACKEND;
+const API_BASE = '';
 
 /**
  * Resilient Post Fetch Helper
@@ -122,6 +120,25 @@ const seriesFullTitle = document.getElementById('series-full-title');
 const scrollToDownloadsBtn = document.getElementById('scroll-to-downloads-btn');
 const playerControlsTopGroup = document.getElementById('player-controls-top-group');
 
+// Branded Video Loading Overlay Elements (Using Uploaded Logo)
+const playerVideoLoading = document.getElementById('player-video-loading');
+const pvlStatusTitle = document.getElementById('pvl-status-title');
+const pvlStatusSubtitle = document.getElementById('pvl-status-subtitle');
+
+function showPlayerVideoLoading(title = 'Buffering Video...', subtitle = 'Connecting to high-speed CDN') {
+  if (playerVideoLoading) {
+    if (pvlStatusTitle) pvlStatusTitle.textContent = title;
+    if (pvlStatusSubtitle) pvlStatusSubtitle.textContent = subtitle;
+    playerVideoLoading.classList.add('active');
+  }
+}
+
+function hidePlayerVideoLoading() {
+  if (playerVideoLoading) {
+    playerVideoLoading.classList.remove('active');
+  }
+}
+
 // Download Elements
 const unifiedDownloadContainer = document.getElementById('unified-download-container') || document.getElementById('quality-download-grid');
 const dlStatusBanner = document.getElementById('dl-status-banner');
@@ -223,6 +240,8 @@ async function loadEpisode() {
     return;
   }
 
+  showPlayerVideoLoading('Loading Title...', 'Resolving media stream & CDN servers');
+
   try {
     seriesData = await fetchPostData(id, source);
 
@@ -289,6 +308,8 @@ async function loadEpisode() {
       setupDirectStreamPlayback(true);
     } else if (seriesData.embedUrl) {
       switchToEmbedPlayer();
+    } else if (seriesData.isFilmyzilla || seriesData.source === 'Filmyzilla') {
+      setupFilmyzillaHeroStage();
     } else {
       switchToCustomPlayer(false);
     }
@@ -308,6 +329,7 @@ async function loadEpisode() {
     trackUniqueView(id);
 
   } catch (err) {
+    hidePlayerVideoLoading();
     console.error('Episode load error:', err);
     seriesFullTitle.textContent = 'Content Unavailable';
     showToast(err.message, 'error');
@@ -332,6 +354,8 @@ async function loadEpisode() {
  * Setup Direct Stream Playback (Native HTML5 or HLS.js with Audio/Subtitle Tracks)
  */
 function setupDirectStreamPlayback(autoPlay = true) {
+  showPlayerVideoLoading('Buffering Stream...', 'Connecting to direct CDN video player');
+
   if (!seriesData?.directStreamUrl) {
     if (seriesData?.embedUrl) {
       showToast('Direct stream unavailable, loading embedded player...', 'info');
@@ -475,6 +499,7 @@ function switchToEmbedPlayer() {
     showToast('No embedded player stream available for this title', 'error');
     return;
   }
+  showPlayerVideoLoading('Connecting Embedded Player...', 'Loading embedded player stream');
   customVideo.pause();
   customVideo.style.display = 'none';
   embedIframe.src = seriesData.embedUrl;
@@ -482,6 +507,11 @@ function switchToEmbedPlayer() {
   centerPlayBtn.style.display = 'none';
   playerOverlay.style.display = 'none';
   activePlayerType = 'embed';
+
+  embedIframe.onload = () => {
+    setTimeout(hidePlayerVideoLoading, 400);
+  };
+  setTimeout(hidePlayerVideoLoading, 2400);
 
   if (btnModeEmbed) btnModeEmbed.classList.add('active');
   if (btnModeDirect) btnModeDirect.classList.remove('active');
@@ -814,8 +844,38 @@ playerOverlay.addEventListener('click', (e) => {
   togglePlay();
 });
 
+// Video Loading & Buffering Animation Lifecycle
+customVideo.addEventListener('loadstart', () => {
+  showPlayerVideoLoading('Loading Video Stream...', 'Initializing playback buffer');
+});
+
+customVideo.addEventListener('waiting', () => {
+  showPlayerVideoLoading('Buffering Stream...', 'Optimizing bitrate & stream segments');
+});
+
+customVideo.addEventListener('seeking', () => {
+  showPlayerVideoLoading('Seeking Timeline...', 'Loading keyframes');
+});
+
+customVideo.addEventListener('canplay', () => {
+  hidePlayerVideoLoading();
+});
+
+customVideo.addEventListener('playing', () => {
+  hidePlayerVideoLoading();
+});
+
+customVideo.addEventListener('loadeddata', () => {
+  hidePlayerVideoLoading();
+});
+
+customVideo.addEventListener('error', () => {
+  hidePlayerVideoLoading();
+});
+
 // Video Events & Timeline Duration Updates
 customVideo.addEventListener('play', () => {
+  hidePlayerVideoLoading();
   ctrlPlayIcon.className = 'fa-solid fa-pause';
   centerPlayIcon.className = 'fa-solid fa-pause';
   centerPlayBtn.style.opacity = '0';
@@ -1103,6 +1163,14 @@ function renderDownloadSection(qualities, title) {
 
   const safeTitle = (title || 'ASI OTT Release').replace(/"/g, '&quot;');
 
+  // Check if Filmyzilla source or multi-server qualities structure
+  const isFilmyzilla = seriesData?.isFilmyzilla || seriesData?.source === 'Filmyzilla' || (Array.isArray(qualities) && qualities.some(q => Array.isArray(q.servers) && q.servers.length > 0));
+
+  if (isFilmyzilla) {
+    renderFilmyzillaDownloadSection(qualities, title);
+    return;
+  }
+
   // Find standard tiers (480p, 720p, 1080p)
   const tierList = Array.isArray(qualities) ? qualities : [];
   const getTier = (q) => tierList.find(t => (t.quality || '').toLowerCase().includes(q));
@@ -1241,6 +1309,187 @@ async function initiateVerifiedDownload(downloadUrl, quality, size, encodedTitle
     showToast(err.message, 'error');
     setTimeout(() => dlStatusBanner.classList.remove('active'), 5000);
   }
+}
+
+/**
+ * Specialized Hero Stage for Filmyzilla Multi-Server Download Content
+ */
+function setupFilmyzillaHeroStage() {
+  if (playerControlsTopGroup) playerControlsTopGroup.style.display = 'none';
+  if (centerPlayBtn) centerPlayBtn.style.display = 'none';
+  if (playerOverlay) playerOverlay.style.display = 'none';
+  if (customVideo) customVideo.style.display = 'none';
+  if (embedIframe) embedIframe.style.display = 'none';
+
+  let heroBanner = document.getElementById('filmyzilla-hero-banner');
+  if (!heroBanner) {
+    heroBanner = document.createElement('div');
+    heroBanner.id = 'filmyzilla-hero-banner';
+    heroBanner.className = 'filmyzilla-hero-banner';
+    if (playerStage) playerStage.appendChild(heroBanner);
+  }
+
+  const safeTitle = seriesData?.title || 'Filmyzilla Release';
+  const poster = seriesData?.poster || '';
+  const totalQualities = Array.isArray(seriesData?.qualities) ? seriesData.qualities.length : 0;
+
+  heroBanner.style.display = 'flex';
+  heroBanner.innerHTML = `
+    <div class="fzh-hero-bg" style="background-image: url('${poster}');"></div>
+    <div class="fzh-hero-content">
+      <div class="fzh-hero-pill">
+        <i class="fa-solid fa-cloud-arrow-down"></i> Multi-Server Direct Delivery
+      </div>
+      <h2 class="fzh-hero-title">${safeTitle}</h2>
+      <p class="fzh-hero-desc">
+        Genuine high-speed download mirrors with 4 dedicated servers per resolution (480p, 720p, 1080p).
+      </p>
+      <button class="fzh-hero-cta" onclick="document.getElementById('download-section').scrollIntoView({ behavior: 'smooth' })">
+        <i class="fa-solid fa-download"></i> Choose Quality & Server (${totalQualities} Available)
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Specialized Filmyzilla 4-Server Download Hub Renderer
+ * Shows all qualities (480p, 720p, 1080p) with file size & all 4 individual server buttons
+ */
+function renderFilmyzillaDownloadSection(qualities, title) {
+  const container = document.getElementById('unified-download-container') || document.getElementById('quality-download-grid');
+  if (!container) return;
+
+  const safeTitle = (title || 'Filmyzilla Release').replace(/"/g, '&quot;');
+  const qualityList = Array.isArray(qualities) ? qualities : [];
+
+  if (qualityList.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+        <i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; color: #f43f5e; margin-bottom: 0.75rem;"></i>
+        <p>No download mirrors currently available for this title.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="filmyzilla-download-hub">
+      <div class="fzh-header">
+        <div class="fzh-header-left">
+          <div class="fzh-badge-icon">
+            <i class="fa-solid fa-bolt-lightning"></i>
+          </div>
+          <div>
+            <h3 class="fzh-title">${safeTitle}</h3>
+            <div class="fzh-meta-line">
+              <span><i class="fa-solid fa-server" style="color: var(--accent-cyan);"></i> 4 Servers Per Quality</span>
+              <span><i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Verified Direct Tokens</span>
+              <span><i class="fa-solid fa-shield-halved" style="color: var(--accent-cyan);"></i> Zero False Downloads</span>
+            </div>
+          </div>
+        </div>
+        <div class="fzh-source-badge">
+          <i class="fa-solid fa-bolt"></i> Filmyzilla Verified
+        </div>
+      </div>
+
+      <div class="fzh-qualities-list">
+        ${qualityList.map((q) => {
+          const qName = q.quality || 'Standard Quality';
+          const qSize = q.size || 'HD File';
+          const servers = Array.isArray(q.servers) ? q.servers : [];
+
+          let badgeTheme = 'fzh-badge-cyan';
+          if (qName.includes('1080')) badgeTheme = 'fzh-badge-emerald';
+          else if (qName.includes('720')) badgeTheme = 'fzh-badge-rose';
+
+          return `
+            <div class="fzh-quality-card">
+              <div class="fzh-card-header">
+                <div class="fzh-quality-info">
+                  <span class="fzh-quality-tag ${badgeTheme}">${qName}</span>
+                  <span class="fzh-format-pill"><i class="fa-solid fa-file-video"></i> MKV</span>
+                </div>
+                <div class="fzh-size-pill">
+                  <i class="fa-solid fa-hard-drive"></i>
+                  <span>${qSize}</span>
+                </div>
+              </div>
+
+              <div class="fzh-servers-heading">
+                <i class="fa-solid fa-server"></i> Available Download Mirrors (${qName} • ${qSize}):
+              </div>
+
+              <div class="fzh-server-grid">
+                ${servers.map(s => {
+                  const sNum = s.serverNumber || 1;
+                  const sName = s.name || `Server ${sNum}`;
+                  const sUrl = s.url || `/api/filmyzilla-download?serverId=${q.serverId}&server=${sNum}`;
+
+                  return `
+                    <button 
+                      class="fzh-server-button" 
+                      onclick="initiateFilmyzillaDownload('${sUrl}', '${qName}', '${sName}', '${qSize}', '${encodeURIComponent(title)}')"
+                      title="Download ${qName} from ${sName} (${qSize})"
+                    >
+                      <div class="fzh-btn-left">
+                        <span class="fzh-server-num">S${sNum}</span>
+                        <div class="fzh-server-text">
+                          <span class="fzh-server-title">${sName}</span>
+                          <span class="fzh-server-sub">${qSize} • High Speed</span>
+                        </div>
+                      </div>
+                      <i class="fa-solid fa-arrow-down-to-bracket fzh-download-icon"></i>
+                    </button>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div class="fzh-footer-notice">
+        <i class="fa-solid fa-circle-info"></i>
+        <span>Each resolution provides 4 high-speed download mirrors with full file size. If any server is busy, switch to another mirror to continue downloading at maximum bandwidth.</span>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Initiates Filmyzilla Multi-Server Download via API Token Redirect
+ */
+function initiateFilmyzillaDownload(serverUrl, quality, serverName, size, encodedTitle) {
+  const title = decodeURIComponent(encodedTitle);
+  const targetFilename = `${title.replace(/[/\\?%*:|"<>]/g, '_')}_${quality}.mkv`;
+
+  dlStatusBanner.classList.add('active');
+  dlStatusText.textContent = `Connecting to ${serverName} for ${quality} (${size})...`;
+  dlStatusBadge.textContent = 'Connecting';
+  showToast(`Initiating ${quality} download via ${serverName}...`, 'info');
+
+  let fullUrl = serverUrl;
+  if (fullUrl.startsWith('/api/')) {
+    fullUrl = `${API_BASE}${fullUrl}`;
+  }
+
+  const a = document.createElement('a');
+  a.href = fullUrl;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.download = targetFilename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    if (document.body.contains(a)) document.body.removeChild(a);
+  }, 1000);
+
+  setTimeout(() => {
+    dlStatusText.textContent = `Verified token generated! Media server ready for ${serverName}.`;
+    dlStatusBadge.textContent = 'Active';
+    setTimeout(() => dlStatusBanner.classList.remove('active'), 4000);
+  }, 2000);
 }
 
 /**

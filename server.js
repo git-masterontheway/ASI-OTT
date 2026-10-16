@@ -8,6 +8,14 @@ const app = express();
 const DEFAULT_PORT = process.env.PORT || 3000;
 const PROD_DOMAIN = process.env.APP_DOMAIN || 'https://asiott.xo.je';
 
+// Global crash guards to prevent server restarts on socket drops or stream interruptions
+process.on('uncaughtException', (err) => {
+  console.warn('[Server] Uncaught exception safely handled:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.warn('[Server] Unhandled rejection safely handled:', reason?.message || reason);
+});
+
 // Trust proxy for secure cookies, client IP, and HTTPS reverse proxy (Vercel / Cloudflare / Nginx)
 app.enable('trust proxy');
 
@@ -24,7 +32,7 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin) || origin.includes('asiott.xo.je') || origin.endsWith('.vercel.app')) {
+    if (!origin || allowedOrigins.includes(origin) || origin.includes('asiott.xo.je') || origin.endsWith('.vercel.app') || origin.includes('onrender.com')) {
       callback(null, true);
     } else {
       callback(null, true); // Permissive fallback for multi-source client aggregation
@@ -45,6 +53,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Explicit route for /watch
 app.get('/watch', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'watch.html'));
+});
+
+// Production Health Check endpoints (for Render, Vercel & uptime monitoring)
+app.get(['/health', '/api/health'], (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    environment: process.env.VERCEL ? 'vercel' : (process.env.RENDER ? 'render' : 'standalone'),
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Path to independent IP view counter database
@@ -107,25 +125,251 @@ const COMMON_HEADERS = {
   'Upgrade-Insecure-Requests': '1'
 };
 
+// Authoritative upstream source base domains
+const MOVIES4U_BASE = 'https://new2.movies4u.garden';
+const FILMYZILLA_BASE = 'https://www.filmyzilla74.com';
+
+// ---------------------------------------------------------------------------
+// Dynamic HDHub4u Gateway Mirror Resolver (Powered by https://hdhub4u.kg/)
+// Automatically updates if content domain moves in future without manual edits
+// ---------------------------------------------------------------------------
+let dynamicHdhubBase = 'https://new8.hdhub4u.cl';
+let lastHdhubResolvedAt = 0;
+const HDHUB_RESOLVE_TTL = 15 * 60 * 1000; // 15 minutes cache
+
+async function getActiveHdhubBase() {
+  const now = Date.now();
+  if (dynamicHdhubBase && (now - lastHdhubResolvedAt < HDHUB_RESOLVE_TTL)) {
+    return dynamicHdhubBase;
+  }
+
+  const gatewayApis = [
+    'https://h4.suncdn.org/host/',
+    'https://points.topapii.com/host/',
+    'https://ml.theapii.org/host/',
+    'https://dns.pingora.fyi/v2/host',
+    'https://cdn.hub4u.cloud/host/'
+  ];
+
+  const t = new Date();
+  const e = 1e6 * t.getFullYear() + 1e4 * (t.getMonth() + 1) + 100 * t.getDate() + t.getHours() + 1;
+
+  for (const api of gatewayApis) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(`${api}?v=${e}`, {
+        headers: { 'User-Agent': COMMON_HEADERS['User-Agent'] },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data && data.c) {
+        const decoded = Buffer.from(data.c, 'base64').toString('utf8').trim();
+        const u = new URL(decoded);
+        dynamicHdhubBase = `${u.protocol}//${u.host}`;
+        lastHdhubResolvedAt = now;
+        console.log(`[HDHub Gateway] Successfully resolved active mirror domain: ${dynamicHdhubBase}`);
+        return dynamicHdhubBase;
+      }
+    } catch (err) {
+      // try next gateway host
+    }
+  }
+
+  // Fallback: parse landing gateway https://hdhub4u.kg/ directly
+  try {
+    const res = await fetch('https://hdhub4u.kg/', {
+      headers: { 'User-Agent': COMMON_HEADERS['User-Agent'] }
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const m = html.match(/aHR0cHM6Ly9[a-zA-Z0-9+/=]+/g);
+      if (m) {
+        for (const b64 of m) {
+          try {
+            const dec = Buffer.from(b64, 'base64').toString('utf8');
+            if (dec.includes('hdhub4u') && dec.startsWith('http')) {
+              const u = new URL(dec);
+              dynamicHdhubBase = `${u.protocol}//${u.host}`;
+              lastHdhubResolvedAt = now;
+              console.log(`[HDHub Gateway] Resolved mirror from kg landing: ${dynamicHdhubBase}`);
+              return dynamicHdhubBase;
+            }
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (err) {}
+
+  lastHdhubResolvedAt = now;
+  return dynamicHdhubBase || 'https://new8.hdhub4u.cl';
+}
+
+// ---------------------------------------------------------------------------
+// SOURCE: https://www.filmyzilla74.com/ (High-Speed In-Memory Sitemap Index)
+// ---------------------------------------------------------------------------
+let filmyzillaIndex = null;
+let filmyzillaIndexedAt = 0;
+const FILMYZILLA_INDEX_TTL = 60 * 60 * 1000; // 1 hour in-memory cache
+
+async function getFilmyzillaIndex() {
+  const now = Date.now();
+  if (filmyzillaIndex && (now - filmyzillaIndexedAt < FILMYZILLA_INDEX_TTL)) {
+    return filmyzillaIndex;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${FILMYZILLA_BASE}/sitemap.xml`, {
+      headers: { ...COMMON_HEADERS, 'Referer': `${FILMYZILLA_BASE}/` },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return filmyzillaIndex || [];
+    const xml = await res.text();
+    const urls = [...xml.matchAll(/<loc>(https?:\/\/[^<]+)<\/loc>/gi)].map(m => m[1]);
+    const index = [];
+
+    for (const u of urls) {
+      const match = u.match(/\/movie\/(\d+)\/([^/]+)\.html/i);
+      if (!match) continue;
+      const movieId = match[1];
+      const slug = match[2];
+
+      const cleanTitle = slug
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, c => c.toUpperCase());
+
+      const thumbnail = `${FILMYZILLA_BASE}/files/images/${slug}.jpg`;
+      const isSeries = cleanTitle.toLowerCase().includes('series') || cleanTitle.toLowerCase().includes('season') || cleanTitle.toLowerCase().includes('s0');
+
+      index.push({
+        id: `filmyzilla_${movieId}`,
+        movieId,
+        slug: `${movieId}/${slug}.html`,
+        rawSlug: slug,
+        permalink: u,
+        title: cleanTitle,
+        thumbnail,
+        views: `${(Math.floor(Math.random() * 25) + 12) / 10}k views`,
+        source: 'Filmyzilla',
+        category: isSeries ? 'Web Series' : 'Movies',
+        quality: '1080p | 720p | 480p'
+      });
+    }
+
+    filmyzillaIndex = index;
+    filmyzillaIndexedAt = now;
+    console.log(`[Filmyzilla] Successfully indexed ${index.length} movies from sitemap`);
+    return index;
+  } catch (err) {
+    console.warn('[Filmyzilla] Failed to load sitemap index:', err.message);
+    return filmyzillaIndex || [];
+  }
+}
+
+async function fetchFilmyzillaSearch(query) {
+  if (!query) return [];
+  const index = await getFilmyzillaIndex();
+  if (!index || index.length === 0) return [];
+
+  const qRaw = query.trim().toLowerCase();
+  const qAlnum = qRaw.replace(/[^a-z0-9]/g, '');
+  const qWords = qRaw.split(/[^a-z0-9]+/).filter(w => w.length > 1);
+
+  if (qAlnum.length === 0) return [];
+
+  const scored = [];
+
+  for (const item of index) {
+    const tRaw = item.title.toLowerCase();
+    const tAlnum = tRaw.replace(/[^a-z0-9]/g, '');
+    const sRaw = (item.rawSlug || item.slug || '').toLowerCase();
+    const sAlnum = sRaw.replace(/[^a-z0-9]/g, '');
+
+    let score = 0;
+
+    // 1. Exact raw substring match
+    if (tRaw.includes(qRaw) || sRaw.includes(qRaw)) {
+      score += 150;
+    }
+    // 2. Collapsed alphanumeric match (e.g. "spiderman" <-> "spider man", "avatar2" <-> "avatar 2")
+    else if (tAlnum.includes(qAlnum) || sAlnum.includes(qAlnum)) {
+      score += 120;
+    }
+
+    // 3. Token-based matching & overlap
+    if (qWords.length > 0) {
+      let matchedWords = 0;
+      for (const w of qWords) {
+        if (tRaw.includes(w) || sRaw.includes(w)) {
+          matchedWords++;
+        } else if (w.length >= 4 && (tAlnum.includes(w) || sAlnum.includes(w))) {
+          matchedWords++;
+        }
+      }
+
+      if (matchedWords === qWords.length) {
+        score += 80;
+      } else if (matchedWords > 0) {
+        const ratio = matchedWords / qWords.length;
+        if (ratio >= 0.5) {
+          score += Math.round(50 * ratio);
+        }
+      }
+    }
+
+    // 4. Substring prefix match on words (e.g. "aveng" matches "avengers")
+    for (const w of qWords) {
+      if (w.length >= 3) {
+        const itemWords = tRaw.split(/[^a-z0-9]+/).filter(Boolean);
+        for (const iw of itemWords) {
+          if (iw.startsWith(w) || (w.length >= 4 && iw.includes(w))) {
+            score += 15;
+            break;
+          }
+        }
+      }
+    }
+
+    if (score > 20) {
+      scored.push({ item, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 30).map(s => s.item);
+}
+
 /**
  * Map file, video, and stream URLs to their authoritative referer domain to satisfy CDN hotlinking checks
  */
 function getRefererForUrl(targetUrl) {
-  if (!targetUrl) return 'https://hdwall.xyz/';
+  const currentHdwall = dynamicHdhubBase || 'https://new8.hdhub4u.cl';
+  if (!targetUrl) return `${currentHdwall}/`;
   try {
     const u = new URL(targetUrl);
     const host = u.hostname.toLowerCase();
+    if (host.includes('filmyzilla')) {
+      return `${FILMYZILLA_BASE}/`;
+    }
     if (host.includes('acek-cdn') || host.includes('m4uplay') || host.includes('morenci') || host.includes('morencl')) {
       return 'https://m4uplay.quest/';
     }
     if (host.includes('movies4u') || host.includes('m4ulinks')) {
-      return 'https://new1.movies4u.garden/';
+      return `${MOVIES4U_BASE}/`;
     }
     if (host.includes('filesdl') || host.includes('awssspp') || host.includes('a4udia')) {
       return 'https://new1.filesdl.in/';
     }
-    if (host.includes('hubcdn.io') || host.includes('hdwall.xyz')) {
-      return 'https://hdwall.xyz/';
+    if (host.includes('hubcdn.io') || host.includes('hdwall.xyz') || host.includes('hdtvb.net') || host.includes('hdhubs.xyz') || host.includes('hdhub4u')) {
+      return `${currentHdwall}/`;
     }
     if (host.includes('gamerxyt')) {
       return 'https://hubcloud.ist/';
@@ -141,7 +385,7 @@ function getRefererForUrl(targetUrl) {
     }
     return `${u.protocol}//${u.host}/`;
   } catch (e) {
-    return 'https://hdwall.xyz/';
+    return `${currentHdwall}/`;
   }
 }
 
@@ -157,7 +401,7 @@ async function fetchWithRefererRedirect(url, baseHeaders = {}, maxRedirects = 5)
     try {
       origin = new URL(referer).origin;
     } catch (e) {
-      origin = 'https://hdwall.xyz';
+      origin = dynamicHdhubBase || 'https://new8.hdhub4u.cl';
     }
 
     const headers = {
@@ -202,9 +446,10 @@ async function resolveHubCloudLink(hubCloudUrl) {
     return cached.data;
   }
 
+  const activeBase = await getActiveHdhubBase();
   try {
     const res = await fetch(hubCloudUrl, {
-      headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' }
+      headers: { ...COMMON_HEADERS, 'Referer': `${activeBase}/` }
     });
     if (!res.ok) return null;
     const html = await res.text();
@@ -222,7 +467,7 @@ async function resolveHubCloudLink(hubCloudUrl) {
     const r2Match = gHtml.match(/href=["'](https?:\/\/[^"'\s<>]*\.r2\.cloudflarestorage\.com\/[^"']+)["']/i) ||
       gHtml.match(/href=["'](https?:\/\/[^"'\s<>]*\.r2\.dev\/[^"']+)["']/i);
     const server10GbpsMatch = gHtml.match(/href=["'](https?:\/\/[^"'\s<>]*gpdl[^"'\s<>]*\/\?[^"']+)["']/i) ||
-      gHtml.match(/href=["'](https?:\/\/[^"'\s<>]*hubcloud\.ist\/\?[^"']+)["']/i) ||
+      gHtml.match(/href=["'](https?:\/\/[^"'\s<>]*hubcloud\.[a-z0-9-]+\/\?[^"']+)["']/i) ||
       gHtml.match(/href=["'](https?:\/\/pixeldrain\.dev\/u\/[^"']+)["']/i);
     const watchMatch = gHtml.match(/href=["'](https?:\/\/hbplay\.pages\.dev\/\?u=([^"'\s&]+)[^"']*)["']/i);
 
@@ -269,9 +514,10 @@ async function resolveHubCdnTier(hubCdnUrl) {
     return cached.data;
   }
 
+  const activeBase = await getActiveHdhubBase();
   try {
     const r1 = await fetch(hubCdnUrl, {
-      headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' }
+      headers: { ...COMMON_HEADERS, 'Referer': `${activeBase}/` }
     });
     if (!r1.ok) return null;
     const h1 = await r1.text();
@@ -428,9 +674,15 @@ function extractM4uPlayer(m4uHtml, fileId) {
 function detectCategory(title, source) {
   if (source === 'MicroTV') return 'Mini Drama';
   const clean = (title || '').toLowerCase();
+  if (clean.includes('tv show') || clean.includes('tv series') || clean.includes('television') ||
+      clean.includes('reality show') || clean.includes('talk show') || clean.includes('k-drama') ||
+      clean.includes('kdrama') || clean.includes('drama series')) {
+    return 'TV Shows';
+  }
   if (clean.includes('season') || clean.includes('s0') || clean.includes('s1') || clean.includes('s2') ||
-    clean.includes('complete series') || clean.includes('completed web') || clean.includes('web series') ||
-    clean.includes('episode')) {
+      clean.includes('s3') || clean.includes('s4') || clean.includes('s5') ||
+      clean.includes('complete series') || clean.includes('completed web') || clean.includes('web series') ||
+      clean.includes('episode')) {
     return 'Web Series';
   }
   return 'Movies';
@@ -625,14 +877,14 @@ function parsePagination(html, requestedPage) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. SOURCE: new1.movies4u.garden (Movies & Series)
+// 2. SOURCE: new2.movies4u.garden (Movies & Series)
 // ---------------------------------------------------------------------------
 async function fetchMovies4uSearch(query) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 6000);
-    const res = await fetch(`https://new1.movies4u.garden/lookup.php?q=${encodeURIComponent(query)}`, {
-      headers: { ...COMMON_HEADERS, 'Referer': 'https://new1.movies4u.garden/' },
+    const res = await fetch(`${MOVIES4U_BASE}/lookup.php?q=${encodeURIComponent(query)}`, {
+      headers: { ...COMMON_HEADERS, 'Referer': `${MOVIES4U_BASE}/` },
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -653,10 +905,14 @@ async function fetchMovies4uSearch(query) {
 
       const title = cleanTitle(hit.post_title);
       const cat = detectCategory(title, 'Movies4u');
+      const permalink = hit.permalink
+        ? (hit.permalink.startsWith('http') ? hit.permalink : `${MOVIES4U_BASE}/${hit.permalink.replace(/^\/+/, '')}`)
+        : `${MOVIES4U_BASE}/?p=${hit.id}`;
+
       return {
         id: `m4u_${slug || hit.id}`,
         slug: slug || String(hit.id),
-        permalink: hit.permalink,
+        permalink,
         title,
         thumbnail: hit.post_thumbnail || '',
         views: '2.5k views',
@@ -675,9 +931,9 @@ async function fetchMovies4uHome(page = 1) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 7000);
-    const targetUrl = page > 1 ? `https://new1.movies4u.garden/page/${page}/` : 'https://new1.movies4u.garden/';
+    const targetUrl = page > 1 ? `${MOVIES4U_BASE}/page/${page}/` : `${MOVIES4U_BASE}/`;
     const res = await fetch(targetUrl, {
-      headers: { ...COMMON_HEADERS, 'Referer': 'https://new1.movies4u.garden/' },
+      headers: { ...COMMON_HEADERS, 'Referer': `${MOVIES4U_BASE}/` },
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -689,10 +945,12 @@ async function fetchMovies4uHome(page = 1) {
 
     articles.forEach((art, idx) => {
       const artHtml = art[1];
-      const linkMatch = artHtml.match(/<a\s+[^>]*href=["'](https?:\/\/new1\.movies4u\.garden\/[^"']+)["']/i);
+      const linkMatch = artHtml.match(/<a\s+[^>]*href=["'](https?:\/\/(?:new[12]\.movies4u\.garden|[^"']*movies4u[^"']*)\/[^"']+)["']/i) ||
+                        artHtml.match(/<a\s+[^>]*href=["'](\/[^"']+)["']/i);
       if (!linkMatch) return;
 
-      const permalink = linkMatch[1];
+      let permalink = linkMatch[1];
+      if (permalink.startsWith('/')) permalink = `${MOVIES4U_BASE}${permalink}`;
       let slug = '';
       try {
         const u = new URL(permalink);
@@ -740,58 +998,206 @@ async function fetchMovies4uHome(page = 1) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. SOURCE: hdwall.xyz (HDHub4u Mirror)
+// 3. SOURCE: HDHub4u Dynamic Mirror (Resolved from https://hdhub4u.kg/)
 // ---------------------------------------------------------------------------
 async function fetchHdwallSearch(query) {
+  if (!query) return [];
+  const items = [];
+  const activeBase = await getActiveHdhubBase();
+
+  // 1. Typesense Search on pingora.fyi (primary search engine for new8.hdhub4u.cl)
   try {
+    const apiUrl = new URL('https://search.pingora.fyi/collections/post/documents/search');
+    apiUrl.searchParams.append('q', query);
+    apiUrl.searchParams.append('query_by', 'post_title,category,stars,director,imdb_id');
+    apiUrl.searchParams.append('query_by_weights', '4,2,2,2,4');
+    apiUrl.searchParams.append('sort_by', 'sort_by_date:desc');
+    apiUrl.searchParams.append('limit', 25);
+    apiUrl.searchParams.append('highlight_fields', 'none');
+    apiUrl.searchParams.append('use_cache', 'true');
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000);
-    const searchUrl = `https://hdwall.xyz/index.php?do=search&subaction=search&story=${encodeURIComponent(query)}`;
-    const res = await fetch(searchUrl, {
-      headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' },
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(apiUrl.toString(), {
+      headers: {
+        'User-Agent': COMMON_HEADERS['User-Agent'],
+        'Referer': `${activeBase}/search.html?q=${encodeURIComponent(query)}`,
+        'Origin': activeBase,
+        'Accept': 'application/json, text/plain, */*'
+      },
       signal: controller.signal
     });
     clearTimeout(timeout);
 
-    if (!res.ok) return [];
-    const html = await res.text();
-    return parseHdwallHtml(html);
-  } catch (err) {
-    console.warn('HDWall search warning:', err.message);
-    return [];
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.hits)) {
+        for (const h of data.hits) {
+          const doc = h.document;
+          const cleanSlug = doc.permalink ? doc.permalink.replace(/^https?:\/\/[^\/]+\/|\/$/g, '') : '';
+          const cleanT = (doc.post_title || '').replace(/<[^>]+>/g, '').trim();
+          let quality = '1080p | 720p | 480p';
+          const qMatch = cleanT.match(/(480p|720p|1080p|2160p|4k|PreDvD|HEVC|HDRip|BluRay)/i);
+          if (qMatch) quality = qMatch[1];
+
+          items.push({
+            id: `hdwall_${cleanSlug.replace(/\.html$/, '')}`,
+            slug: cleanSlug,
+            permalink: doc.permalink || `${activeBase}/${cleanSlug}`,
+            title: cleanT,
+            thumbnail: doc.featured_image || '',
+            views: `${(Math.floor(Math.random() * 30) + 15) / 10}k views`,
+            source: 'HDWall',
+            category: detectCategory(cleanT, 'HDWall'),
+            quality
+          });
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('HDHub Typesense search warning:', e.message);
   }
+
+  // 2. HDTVB DLE Search (guarantees coverage from https://hdtvb.net/)
+  try {
+    const searchUrl = `https://hdtvb.net/index.php?do=search&subaction=search&story=${encodeURIComponent(query)}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(searchUrl, {
+      headers: {
+        ...COMMON_HEADERS,
+        'Referer': 'https://hdtvb.net/'
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const html = await res.text();
+      const thumbs = [...html.matchAll(/<li\s+class=["'][^"']*thumb[^"']*["']>([\s\S]*?)<\/li>/gi)];
+      thumbs.forEach(t => {
+        const tHtml = t[1];
+        const linkMatch = tHtml.match(/<a\s+[^>]*href=["'](https?:\/\/[^"']+\/[^"']+\.html)["']/i) ||
+                          tHtml.match(/<a\s+[^>]*href=["'](\/[^"']+\.html)["']/i);
+        if (!linkMatch) return;
+        let permalink = linkMatch[1];
+        if (permalink.startsWith('/')) permalink = `https://hdtvb.net${permalink}`;
+        const slug = permalink.replace(/^https?:\/\/[^\/]+\/|\/$/g, '');
+
+        const figMatch = tHtml.match(/<figcaption>[\s\S]*?<p>([\s\S]*?)<\/p>/i) ||
+                         tHtml.match(/alt=["']([^"']+)["']/i);
+        const title = figMatch ? cleanTitle(figMatch[1]) : slug;
+
+        const imgMatch = tHtml.match(/src=["']([^"']+)["']/i);
+        let thumbnail = imgMatch ? imgMatch[1] : '';
+        if (thumbnail.startsWith('/')) thumbnail = `https://hdtvb.net${thumbnail}`;
+
+        let quality = '1080p | 720p | 480p';
+        const qMatch = title.match(/(480p|720p|1080p|2160p|4k|PreDvD|HEVC|HDRip|BluRay)/i);
+        if (qMatch) quality = qMatch[1];
+
+        if (!items.some(i => i.slug === slug || i.title.toLowerCase() === title.toLowerCase())) {
+          items.push({
+            id: `hdwall_${slug.replace(/\.html$/, '')}`,
+            slug,
+            permalink,
+            title,
+            thumbnail,
+            views: `${(Math.floor(Math.random() * 30) + 15) / 10}k views`,
+            source: 'HDWall',
+            category: detectCategory(title, 'HDWall'),
+            quality
+          });
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('HDTVB DLE search warning:', e.message);
+  }
+
+  // 3. Fallback for Similar Multi-word queries: if low results, search primary keyword token
+  if (items.length < 3 && query.includes(' ')) {
+    const qTokens = query.split(/\s+/).filter(w => w.length > 2 && !['movie', 'series', 'download', 'hindi', 'full', 'watch'].includes(w.toLowerCase()));
+    if (qTokens.length > 0) {
+      try {
+        const fallbackUrl = new URL('https://search.pingora.fyi/collections/post/documents/search');
+        fallbackUrl.searchParams.append('q', qTokens[0]);
+        fallbackUrl.searchParams.append('query_by', 'post_title,category,stars');
+        fallbackUrl.searchParams.append('limit', 15);
+        fallbackUrl.searchParams.append('highlight_fields', 'none');
+
+        const fRes = await fetch(fallbackUrl.toString(), {
+          headers: {
+            'User-Agent': COMMON_HEADERS['User-Agent'],
+            'Referer': `${activeBase}/search.html?q=${encodeURIComponent(qTokens[0])}`,
+            'Origin': activeBase
+          }
+        });
+        if (fRes.ok) {
+          const fData = await fRes.json();
+          if (fData && Array.isArray(fData.hits)) {
+            for (const h of fData.hits) {
+              const doc = h.document;
+              const cleanSlug = doc.permalink ? doc.permalink.replace(/^https?:\/\/[^\/]+\/|\/$/g, '') : '';
+              const cleanT = (doc.post_title || '').replace(/<[^>]+>/g, '').trim();
+              if (!items.some(i => i.slug === cleanSlug || i.title.toLowerCase() === cleanT.toLowerCase())) {
+                items.push({
+                  id: `hdwall_${cleanSlug.replace(/\.html$/, '')}`,
+                  slug: cleanSlug,
+                  permalink: doc.permalink || `${activeBase}/${cleanSlug}`,
+                  title: cleanT,
+                  thumbnail: doc.featured_image || '',
+                  views: '2.5k views',
+                  source: 'HDWall',
+                  category: detectCategory(cleanT, 'HDWall'),
+                  quality: '1080p | 720p | 480p'
+                });
+              }
+            }
+          }
+        }
+      } catch (fe) {}
+    }
+  }
+
+  return items;
 }
 
 async function fetchHdwallHome(page = 1) {
   try {
+    const activeBase = await getActiveHdhubBase();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 7000);
-    const targetUrl = page > 1 ? `https://hdwall.xyz/page/${page}/` : 'https://hdwall.xyz/';
+    const targetUrl = page > 1 ? `${activeBase}/page/${page}/` : `${activeBase}/`;
     const res = await fetch(targetUrl, {
-      headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' },
+      headers: { ...COMMON_HEADERS, 'Referer': `${activeBase}/` },
       signal: controller.signal
     });
     clearTimeout(timeout);
 
     if (!res.ok) return [];
     const html = await res.text();
-    return parseHdwallHtml(html);
+    return parseHdwallHtml(html, activeBase);
   } catch (err) {
     console.warn('HDWall home warning:', err.message);
     return [];
   }
 }
 
-function parseHdwallHtml(html) {
+function parseHdwallHtml(html, activeBase = null) {
+  const base = activeBase || dynamicHdhubBase || 'https://new8.hdhub4u.cl';
   const items = [];
   const thumbs = [...html.matchAll(/<li\s+class=["'][^"']*thumb[^"']*["']>([\s\S]*?)<\/li>/gi)];
 
   thumbs.forEach((t, idx) => {
     const tHtml = t[1];
-    const linkMatch = tHtml.match(/<a\s+[^>]*href=["'](https?:\/\/hdwall\.xyz\/[^"']+\.html)["']/i);
+    const linkMatch = tHtml.match(/<a\s+[^>]*href=["'](https?:\/\/(?:hdtvb\.net|hdwall\.xyz|hdhubs\.xyz|[^"']*hdhub4u[^"']*)[^"']*\.html)["']/i) ||
+                      tHtml.match(/<a\s+[^>]*href=["'](\/[^"']+\.html)["']/i) ||
+                      tHtml.match(/<a\s+[^>]*href=["'](https?:\/\/[^"']+\/[^"']+\.html)["']/i);
     if (!linkMatch) return;
 
-    const permalink = linkMatch[1];
+    let permalink = linkMatch[1];
+    if (permalink.startsWith('/')) permalink = `${base}${permalink}`;
     let slug = '';
     try {
       const u = new URL(permalink);
@@ -803,7 +1209,7 @@ function parseHdwallHtml(html) {
     const imgMatch = tHtml.match(/src=["']([^"']+)["']/i);
     let thumbnail = imgMatch ? imgMatch[1] : '';
     if (thumbnail.startsWith('/')) {
-      thumbnail = `https://hdwall.xyz${thumbnail}`;
+      thumbnail = `${base}${thumbnail}`;
     }
 
     const figMatch = tHtml.match(/<figcaption>[\s\S]*?<p>([\s\S]*?)<\/p>[\s\S]*?<\/figcaption>/i) ||
@@ -881,14 +1287,34 @@ app.get('/api/content', async (req, res) => {
         hasPrev: page > 1,
         pages: [1, 2, 3, 4, 5, 30]
       };
+    } else if (categoryFilter === 'tv_shows' || categoryFilter === 'tv shows') {
+      // Dynamic aggregation for TV Shows from Movies4u and HDWall
+      const [m4uItems, hdwallItems] = await Promise.allSettled([
+        fetchMovies4uHome(page),
+        fetchHdwallHome(page)
+      ]);
+      const m4uList = (m4uItems.status === 'fulfilled' ? m4uItems.value : []).filter(i => i.category === 'TV Shows' || i.category === 'Web Series');
+      const hdList = (hdwallItems.status === 'fulfilled' ? hdwallItems.value : []).filter(i => i.category === 'TV Shows' || i.category === 'Web Series');
+      const maxLen = Math.max(m4uList.length, hdList.length);
+      for (let i = 0; i < maxLen; i++) {
+        if (i < m4uList.length) allItems.push(m4uList[i]);
+        if (i < hdList.length) allItems.push(hdList[i]);
+      }
+      pagination = {
+        currentPage: page,
+        totalPages: 30,
+        hasNext: page < 30,
+        hasPrev: page > 1,
+        pages: [1, 2, 3, 4, 5, 30]
+      };
     } else if (categoryFilter === 'web_series' || categoryFilter === 'web series') {
       // Dynamic aggregation for Web Series from Movies4u and HDWall
       const [m4uItems, hdwallItems] = await Promise.allSettled([
         fetchMovies4uHome(page),
         fetchHdwallHome(page)
       ]);
-      const m4uList = (m4uItems.status === 'fulfilled' ? m4uItems.value : []).filter(i => i.category === 'Web Series');
-      const hdList = (hdwallItems.status === 'fulfilled' ? hdwallItems.value : []).filter(i => i.category === 'Web Series');
+      const m4uList = (m4uItems.status === 'fulfilled' ? m4uItems.value : []).filter(i => i.category === 'Web Series' || i.category === 'TV Shows');
+      const hdList = (hdwallItems.status === 'fulfilled' ? hdwallItems.value : []).filter(i => i.category === 'Web Series' || i.category === 'TV Shows');
       const maxLen = Math.max(m4uList.length, hdList.length);
       for (let i = 0; i < maxLen; i++) {
         if (i < m4uList.length) allItems.push(m4uList[i]);
@@ -975,29 +1401,35 @@ app.get('/api/search', async (req, res) => {
     // 2. Query Movies4u internal JSON lookup
     const m4uPromise = fetchMovies4uSearch(query);
 
-    // 3. Query HDWall search
+    // 3. Query HDWall / HDHub mirror search
     const hdwallPromise = fetchHdwallSearch(query);
 
-    // Run all 3 queries concurrently
-    const [microRes, m4uRes, hdwallRes] = await Promise.allSettled([
+    // 4. Query Filmyzilla sitemap index search
+    const filmyzillaPromise = fetchFilmyzillaSearch(query);
+
+    // Run all 4 queries concurrently
+    const [microRes, m4uRes, hdwallRes, filmyRes] = await Promise.allSettled([
       microTvPromise,
       m4uPromise,
-      hdwallPromise
+      hdwallPromise,
+      filmyzillaPromise
     ]);
 
     let microResults = microRes.status === 'fulfilled' ? microRes.value : [];
     const m4uResults = m4uRes.status === 'fulfilled' ? m4uRes.value : [];
     const hdwallResults = hdwallRes.status === 'fulfilled' ? hdwallRes.value : [];
+    const filmyResults = filmyRes.status === 'fulfilled' ? filmyRes.value : [];
 
-    console.log(`Search "${query}" counts: MicroTV=${microResults.length}, Movies4u=${m4uResults.length}, HDWall=${hdwallResults.length}`);
+    console.log(`Search "${query}" counts: MicroTV=${microResults.length}, Movies4u=${m4uResults.length}, HDWall=${hdwallResults.length}, Filmyzilla=${filmyResults.length}`);
 
-    // Aggregate results from all 3 sources
+    // Aggregate results from all 4 sources
     let combined = [];
-    const maxLen = Math.max(microResults.length, m4uResults.length, hdwallResults.length);
+    const maxLen = Math.max(microResults.length, m4uResults.length, hdwallResults.length, filmyResults.length);
     for (let i = 0; i < maxLen; i++) {
       if (i < microResults.length) combined.push(microResults[i]);
       if (i < m4uResults.length) combined.push(m4uResults[i]);
       if (i < hdwallResults.length) combined.push(hdwallResults[i]);
+      if (i < filmyResults.length) combined.push(filmyResults[i]);
     }
 
     // Apply category filtering if requested
@@ -1005,8 +1437,10 @@ app.get('/api/search', async (req, res) => {
       combined = combined.filter(i => i.category === 'Mini Drama');
     } else if (categoryFilter === 'movies') {
       combined = combined.filter(i => i.category === 'Movies');
+    } else if (categoryFilter === 'tv_shows' || categoryFilter === 'tv shows') {
+      combined = combined.filter(i => i.category === 'TV Shows' || i.category === 'Web Series');
     } else if (categoryFilter === 'web_series' || categoryFilter === 'web series') {
-      combined = combined.filter(i => i.category === 'Web Series');
+      combined = combined.filter(i => i.category === 'Web Series' || i.category === 'TV Shows');
     }
 
     res.json({
@@ -1017,7 +1451,8 @@ app.get('/api/search', async (req, res) => {
       sources: {
         microtv: microResults.length,
         movies4u: m4uResults.length,
-        hdwall: hdwallResults.length
+        hdwall: hdwallResults.length,
+        filmyzilla: filmyResults.length
       },
       pagination: {
         currentPage: page,
@@ -1045,7 +1480,7 @@ app.get('/api/post', async (req, res) => {
   let slug = (req.query.slug || req.query.id || '').trim();
   let source = (req.query.source || '').trim();
 
-  // If slug has source prefix (e.g. microtv_..., m4u_..., hdwall_...)
+  // If slug has source prefix (e.g. microtv_..., m4u_..., hdwall_..., filmyzilla_...)
   if (slug.startsWith('microtv_')) {
     source = 'MicroTV';
     slug = slug.replace(/^microtv_/, '');
@@ -1055,54 +1490,198 @@ app.get('/api/post', async (req, res) => {
   } else if (slug.startsWith('hdwall_')) {
     source = 'HDWall';
     slug = slug.replace(/^hdwall_/, '');
+  } else if (slug.startsWith('filmyzilla_')) {
+    source = 'Filmyzilla';
+    slug = slug.replace(/^filmyzilla_/, '');
   }
 
   if (!source) {
-    // Detect by slug format or default to MicroTV
-    if (slug.endsWith('.html')) source = 'HDWall';
+    if (req.query.url && req.query.url.includes('filmyzilla')) source = 'Filmyzilla';
+    else if (slug.endsWith('.html')) source = 'HDWall';
     else if (slug.includes('drishyam') || slug.includes('movie') || slug.includes('series')) source = 'Movies4u';
     else source = 'MicroTV';
   }
 
   try {
-    if (source === 'HDWall') {
-      // ---------------- HDWall Detail Handler ----------------
-      const cleanSlug = slug.replace(/^\/+|\/+$/g, '');
-      const postSlug = cleanSlug.endsWith('.html') ? cleanSlug : `${cleanSlug}.html`;
-      let postUrl = `https://hdwall.xyz/${postSlug}`;
-      let response = await fetch(postUrl, {
-        headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' }
+    if (source === 'Filmyzilla') {
+      // ---------------- Filmyzilla Detail Handler ----------------
+      let movieUrl = null;
+      let movieId = null;
+      let movieSlug = slug;
+
+      if (slug.startsWith('filmyzilla_')) {
+        slug = slug.replace(/^filmyzilla_/, '');
+      }
+
+      if (req.query.url && req.query.url.includes('filmyzilla')) {
+        movieUrl = req.query.url;
+      }
+
+      const index = await getFilmyzillaIndex();
+      const matched = index.find(x => x.movieId === slug || x.id === slug || x.slug === slug || (x.permalink && x.permalink.includes(slug)));
+      if (matched) {
+        movieUrl = matched.permalink;
+        movieId = matched.movieId;
+        movieSlug = matched.slug;
+      } else if (!movieUrl) {
+        if (/^\d+$/.test(slug)) {
+          movieId = slug;
+          movieUrl = `${FILMYZILLA_BASE}/movie/${slug}/movie.html`;
+        } else {
+          movieUrl = `${FILMYZILLA_BASE}/movie/${slug}.html`;
+        }
+      }
+
+      const cacheKey = `filmyzilla_detail_${movieId || movieSlug}`;
+      const cached = RESOLVER_CACHE.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return res.json(cached.data);
+      }
+
+      const postRes = await fetch(movieUrl, {
+        headers: { ...COMMON_HEADERS, 'Referer': `${FILMYZILLA_BASE}/` }
       });
 
-      // If 404, attempt fallback search on HDWall
-      if (!response.ok) {
+      if (!postRes.ok) {
+        return res.status(404).json({ success: false, error: 'Filmyzilla movie not found' });
+      }
+
+      const html = await postRes.text();
+
+      // Title
+      const titleMatch = html.match(/<title>([\s\S]*?)<\/title>/i);
+      let title = titleMatch ? titleMatch[1].replace(/Free Download Filmyzilla/i, '').replace(/Filmyzilla/i, '').trim() : movieSlug.replace(/[-_]+/g, ' ');
+
+      // Poster
+      let poster = `${FILMYZILLA_BASE}/files/images/${movieSlug}.jpg`;
+      const imgMatch = html.match(/<img[^>]+src=["']([^"']*\/files\/images\/[^"']+)["']/i);
+      if (imgMatch) {
+        poster = imgMatch[1].startsWith('http') ? imgMatch[1] : `${FILMYZILLA_BASE}${imgMatch[1]}`;
+      }
+
+      // Extract server links: <a href="https://www.filmyzilla74.com/server/(\d+)/([^"']+)"
+      const serverLinks = [...html.matchAll(/<a[^>]+href=["'](https?:\/\/www\.filmyzilla74\.com\/server\/(\d+)\/([^"']+))["'][^>]*>([\s\S]*?)<\/a>/gi)];
+
+      const qualityFetches = serverLinks.map(async (sl) => {
+        const sUrl = sl[1];
+        const sId = sl[2];
+        const linkText = sl[4].replace(/<[^>]+>/g, '').trim();
+
+        try {
+          const sRes = await fetch(sUrl, {
+            headers: { ...COMMON_HEADERS, 'Referer': movieUrl }
+          });
+          const sHtml = await sRes.text();
+          const sizeMatch = sHtml.match(/Size of file:\s*([0-9.]+\s*[MGBKmgk]+)/i) ||
+                            sHtml.match(/([0-9.]+\s*(?:MB|GB|KB))/i);
+          const fileSize = sizeMatch ? sizeMatch[1].trim() : 'Standard';
+
+          let qLabel = '480p';
+          if (sUrl.includes('1080p') || linkText.includes('1080p')) qLabel = '1080p';
+          else if (sUrl.includes('720p') || linkText.includes('720p')) qLabel = '720p';
+          else if (sUrl.includes('480p') || linkText.includes('480p')) qLabel = '480p';
+          if (sUrl.toLowerCase().includes('hevc') || linkText.toLowerCase().includes('hevc')) {
+            qLabel = `HEVC ${qLabel}`;
+          }
+
+          return {
+            quality: qLabel,
+            size: fileSize,
+            serverId: sId,
+            servers: [
+              { serverNumber: 1, name: 'Server 1 (High Speed)', url: `/api/filmyzilla-download?serverId=${sId}&server=1` },
+              { serverNumber: 2, name: 'Server 2 (Fast CDN)', url: `/api/filmyzilla-download?serverId=${sId}&server=2` },
+              { serverNumber: 3, name: 'Server 3 (Direct)', url: `/api/filmyzilla-download?serverId=${sId}&server=3` },
+              { serverNumber: 4, name: 'Server 4 (Backup)', url: `/api/filmyzilla-download?serverId=${sId}&server=4` }
+            ]
+          };
+        } catch (e) {
+          return null;
+        }
+      });
+
+      const qualities = (await Promise.all(qualityFetches)).filter(Boolean);
+
+      const result = {
+        success: true,
+        id: `filmyzilla_${movieId || movieSlug}`,
+        slug: movieSlug,
+        source: 'Filmyzilla',
+        category: detectCategory(title, 'Filmyzilla'),
+        title,
+        poster,
+        thumbnail: poster,
+        isFilmyzilla: true,
+        qualities,
+        directStreamUrl: null,
+        embedUrl: null,
+        views: '2.8k views',
+        description: 'Multi-server high speed direct download from Filmyzilla.'
+      };
+
+      RESOLVER_CACHE.set(cacheKey, { data: result, expiresAt: Date.now() + RESOLVER_TTL_MS });
+      return res.json(result);
+    }
+
+    if (source === 'HDWall') {
+      // ---------------- HDWall Detail Handler ----------------
+      const activeBase = await getActiveHdhubBase();
+      const cleanSlug = slug.replace(/^\/+|\/+$/g, '');
+      const candidates = [
+        req.query.url,
+        `${activeBase}/${cleanSlug}/`,
+        `${activeBase}/${cleanSlug}`,
+        `${activeBase}/${cleanSlug}.html`,
+        `https://hdtvb.net/${cleanSlug}.html`,
+        `https://hdtvb.net/${cleanSlug}/`
+      ].filter(Boolean);
+
+      let response = null;
+      let postUrl = '';
+
+      for (const candidate of candidates) {
+        try {
+          const res = await fetch(candidate, {
+            headers: { ...COMMON_HEADERS, 'Referer': candidate.includes('hdtvb') ? 'https://hdtvb.net/' : `${activeBase}/` }
+          });
+          if (res.ok) {
+            response = res;
+            postUrl = candidate;
+            break;
+          }
+        } catch (e) {}
+      }
+
+      // Fallback search on HDWall if candidates failed
+      if (!response || !response.ok) {
         try {
           const searchStory = cleanSlug.replace(/\.html$/, '').replace(/[-_]/g, ' ');
-          const searchUrl = `https://hdwall.xyz/index.php?do=search&subaction=search&story=${encodeURIComponent(searchStory)}`;
+          const searchUrl = `${activeBase}/index.php?do=search&subaction=search&story=${encodeURIComponent(searchStory)}`;
           const searchRes = await fetch(searchUrl, {
-            headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' }
+            headers: { ...COMMON_HEADERS, 'Referer': `${activeBase}/` }
           });
           if (searchRes.ok) {
             const searchHtml = await searchRes.text();
-            const items = parseHdwallHtml(searchHtml);
+            const items = parseHdwallHtml(searchHtml, activeBase);
             if (items.length > 0) {
               const matched = items[0];
-              const altSlug = matched.slug.endsWith('.html') ? matched.slug : `${matched.slug}.html`;
-              const altRes = await fetch(`https://hdwall.xyz/${altSlug}`, {
-                headers: { ...COMMON_HEADERS, 'Referer': 'https://hdwall.xyz/' }
+              const altUrl = matched.permalink || `${activeBase}/${matched.slug}`;
+              const altRes = await fetch(altUrl, {
+                headers: { ...COMMON_HEADERS, 'Referer': `${activeBase}/` }
               });
               if (altRes.ok) {
                 response = altRes;
+                postUrl = altUrl;
               }
             }
           }
         } catch (hdErr) {
-          console.warn('HDWall 404 fallback search warning:', hdErr.message);
+          console.warn('HDWall fallback search warning:', hdErr.message);
         }
       }
 
-      if (!response.ok) {
-        return res.status(404).json({ success: false, error: `HDWall item not found (HTTP ${response.status})` });
+      if (!response || !response.ok) {
+        return res.status(404).json({ success: false, error: 'HDWall item not found across all mirrors' });
       }
 
       const html = await response.text();
@@ -1113,34 +1692,33 @@ app.get('/api/post', async (req, res) => {
 
       // Primary Poster
       const posterMatch = html.match(/<figure[^>]*>[\s\S]*?<img[^>]+src=["']([^"']+)["']/i) ||
-        html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i);
+        html.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i) ||
+        html.match(/<img[^>]+class=["'][^"']*aligncenter[^"']*["'][^>]+src=["']([^"']+)["']/i);
       let poster = posterMatch ? posterMatch[1] : '';
-      if (poster.startsWith('/')) poster = `https://hdwall.xyz${poster}`;
+      if (poster.startsWith('/')) poster = `${activeBase}${poster}`;
 
-      // Extract quality downloads mapped to file sizes
-      const links = [...html.matchAll(/<a[^>]+href=["'](https?:\/\/hubcdn\.io\/cloud\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+      // Extract quality downloads mapped to file sizes (supporting hubcdn, hubcloud, hubdrive)
+      const rawLinks = [...html.matchAll(/<a[^>]+href=["'](https?:\/\/(?:hubcdn\.io|hubcloud\.[a-z0-9-]+|hubdrive\.[a-z0-9-]+)\/(?:cloud|drive|video|file)\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
       const qualities = [];
       let directStreamUrl = null;
       let embedUrl = null;
 
-      // Fast resolve first quality link to enable native on-site video playback if available
-      if (links.length > 0) {
-        try {
-          const firstHubUrl = links[0][1];
-          const resolvedFirst = await resolveHubCdnTier(firstHubUrl);
-          if (resolvedFirst?.streamUrl) {
-            directStreamUrl = resolvedFirst.streamUrl;
-          }
-          if (resolvedFirst?.embedUrl) {
-            embedUrl = resolvedFirst.embedUrl;
-          }
-        } catch (e) {
-          console.warn('Pre-resolve HDWall stream warning:', e.message);
+      // Extract and resolve HubCloud/HubDrive links
+      for (const l of rawLinks) {
+        let hubUrl = l[1];
+        if (hubUrl.includes('hubdrive.')) {
+          try {
+            const hdRes = await fetch(hubUrl, { headers: { ...COMMON_HEADERS, 'Referer': postUrl } });
+            if (hdRes.ok) {
+              const hdHtml = await hdRes.text();
+              const hcMatch = hdHtml.match(/href=["'](https?:\/\/hubcloud\.[a-z0-9-]+\/(?:drive|video)\/[^"']+)["']/i);
+              if (hcMatch) {
+                hubUrl = hcMatch[1];
+              }
+            }
+          } catch (e) {}
         }
-      }
 
-      for (const l of links) {
-        const hubUrl = l[1];
         const text = cleanTitle(l[2]);
         const qMatch = text.match(/(480p|720p|1080p|2160p|4k)/i);
         const sMatch = text.match(/([0-9.]+\s*(?:MB|GB|Mb|Gb))/i);
@@ -1155,6 +1733,21 @@ app.get('/api/post', async (req, res) => {
           directDownloadUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=direct`,
           hdCloudUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=hd_cloud`
         });
+      }
+
+      // Fast resolve first quality link for stream playback
+      if (qualities.length > 0 && qualities[0].hubUrl.includes('hubcdn.io')) {
+        try {
+          const resolvedFirst = await resolveHubCdnTier(qualities[0].hubUrl);
+          if (resolvedFirst?.streamUrl) directStreamUrl = resolvedFirst.streamUrl;
+          if (resolvedFirst?.embedUrl) embedUrl = resolvedFirst.embedUrl;
+        } catch (e) {}
+      } else if (qualities.length > 0 && qualities[0].hubUrl.includes('hubcloud.')) {
+        try {
+          const resolvedCloud = await resolveHubCloudLink(qualities[0].hubUrl);
+          if (resolvedCloud?.streamUrl) directStreamUrl = resolvedCloud.streamUrl;
+          if (resolvedCloud?.embedUrl) embedUrl = resolvedCloud.embedUrl;
+        } catch (e) {}
       }
 
       // If no hubcdn links parsed, populate structured tiers
@@ -1179,7 +1772,7 @@ app.get('/api/post', async (req, res) => {
       // Standard Video Player Container setup across all aggregated items (no unplayable warning UI)
       return res.json({
         success: true,
-        slug: postSlug,
+        slug: cleanSlug,
         source: 'HDWall',
         category: detectCategory(title, 'HDWall'),
         title,
@@ -1198,11 +1791,11 @@ app.get('/api/post', async (req, res) => {
       // ---------------- Movies4u Detail Handler ----------------
       const postSlug = slug.replace(/^\/+|\/+$/g, '');
       let postUrl = /^\d+$/.test(postSlug)
-        ? `https://new1.movies4u.garden/?p=${postSlug}`
-        : `https://new1.movies4u.garden/${postSlug}/`;
+        ? `${MOVIES4U_BASE}/?p=${postSlug}`
+        : `${MOVIES4U_BASE}/${postSlug}/`;
 
       let response = await fetch(postUrl, {
-        headers: { ...COMMON_HEADERS, 'Referer': 'https://new1.movies4u.garden/' },
+        headers: { ...COMMON_HEADERS, 'Referer': `${MOVIES4U_BASE}/` },
         redirect: 'follow'
       });
 
@@ -1210,17 +1803,17 @@ app.get('/api/post', async (req, res) => {
       if (!response.ok) {
         try {
           const searchQuery = postSlug.replace(/[-_]/g, ' ');
-          const lookupRes = await fetch(`https://new1.movies4u.garden/lookup.php?q=${encodeURIComponent(searchQuery)}`, {
-            headers: { ...COMMON_HEADERS, 'Referer': 'https://new1.movies4u.garden/' }
+          const lookupRes = await fetch(`${MOVIES4U_BASE}/lookup.php?q=${encodeURIComponent(searchQuery)}`, {
+            headers: { ...COMMON_HEADERS, 'Referer': `${MOVIES4U_BASE}/` }
           });
           if (lookupRes.ok) {
             const lookupData = await lookupRes.json();
             if (lookupData.ok && Array.isArray(lookupData.hits) && lookupData.hits.length > 0) {
               const hit = lookupData.hits[0];
               const hitSlug = (hit.permalink || '').replace(/^https?:\/\/[^\/]+/i, '').replace(/^\/+|\/+$/g, '');
-              const altUrl = hitSlug ? `https://new1.movies4u.garden/${hitSlug}/` : `https://new1.movies4u.garden/?p=${hit.id}`;
+              const altUrl = hitSlug ? `${MOVIES4U_BASE}/${hitSlug}/` : `${MOVIES4U_BASE}/?p=${hit.id}`;
               const altRes = await fetch(altUrl, {
-                headers: { ...COMMON_HEADERS, 'Referer': 'https://new1.movies4u.garden/' },
+                headers: { ...COMMON_HEADERS, 'Referer': `${MOVIES4U_BASE}/` },
                 redirect: 'follow'
               });
               if (altRes.ok) {
@@ -1249,13 +1842,14 @@ app.get('/api/post', async (req, res) => {
       const poster = posterMatch ? posterMatch[1] : '';
 
       // Watch Online link / embed / direct stream
-      const watchMatch = html.match(/<a[^>]+href=["'](https?:\/\/m4uplay\.quest\/file\/([a-zA-Z0-9_-]+))["'][^>]*>[\s\S]*?Watch Online[\s\S]*?<\/a>/i);
+      const watchMatch = html.match(/<a[^>]+href=["'](https?:\/\/m4uplay\.[a-z0-9-]+\/file\/([a-zA-Z0-9_-]+))["'][^>]*>[\s\S]*?Watch Online[\s\S]*?<\/a>/i) ||
+                         html.match(/<a[^>]+href=["'](https?:\/\/m4uplay[^\s"']+)["']/i);
       let embedUrl = null;
       let directStreamUrl = null;
 
       if (watchMatch) {
         const m4uPlayUrl = watchMatch[1];
-        const fileId = watchMatch[2];
+        const fileId = watchMatch[2] || (m4uPlayUrl.match(/\/file\/([a-zA-Z0-9_-]+)/) || [])[1];
         try {
           const m4uRes = await fetch(m4uPlayUrl, { headers: { ...COMMON_HEADERS, 'Referer': postUrl } });
           const m4uText = await m4uRes.text();
@@ -1264,13 +1858,13 @@ app.get('/api/post', async (req, res) => {
           directStreamUrl = playerInfo.directStreamUrl;
         } catch (e) {
           console.warn('Movies4u embed resolve warning:', e.message);
-          embedUrl = `https://morencius.com/embed/${fileId}`;
+          if (fileId) embedUrl = `https://morencius.com/embed/${fileId}`;
         }
       }
 
-      // Download tiers: check for m4ulinks.site on post
+      // Download tiers: check for m4ulinks on post (e.g. m4ulinks.sbs, m4ulinks.site, etc.)
       const qualities = [];
-      const m4uLinksMatch = html.match(/https?:\/\/m4ulinks\.site\/number\/([0-9]+)/i);
+      const m4uLinksMatch = html.match(/https?:\/\/m4ulinks\.[a-z0-9-]+\/number\/([0-9]+)/i);
 
       if (m4uLinksMatch) {
         try {
@@ -1278,14 +1872,18 @@ app.get('/api/post', async (req, res) => {
           const mLinksRes = await fetch(m4uLinksUrl, { headers: { ...COMMON_HEADERS, 'Referer': postUrl } });
           if (mLinksRes.ok) {
             const mLinksHtml = await mLinksRes.text();
-            // Parse download blocks: <h4|p>QUALITY [SIZE]</h4|p> ... <a href="https://hubcloud.ist/(drive|video)/...">
-            const linkDivRegex = /<(?:h[2-6]|p)[^>]*>([\s\S]*?)<\/(?:h[2-6]|p)>[\s\S]*?<a[^>]+href=["'](https?:\/\/[^"']*hubcloud\.ist\/(?:drive|video)\/[^"']+)["']/gi;
             const seenTiers = new Set();
-            let divMatch;
-            while ((divMatch = linkDivRegex.exec(mLinksHtml)) !== null) {
-              const rawHeading = cleanTitle(divMatch[1]);
-              const hubUrl = divMatch[2];
 
+            // 1. Precise heading section matching: <h4|p>QUALITY [SIZE]</h4|p> ... <a href="https://hubcloud.../(drive|video)/...">
+            const sections = [...mLinksHtml.matchAll(/(<h[2-6][^>]*>[\s\S]*?)(?=<h[2-6]|$)/gi)];
+            for (const sec of sections) {
+              const secHtml = sec[1];
+              const headingMatch = secHtml.match(/<h[2-6][^>]*>([\s\S]*?)<\/h[2-6]>/i);
+              const hubMatch = secHtml.match(/href=["'](https?:\/\/[^"']*hubcloud\.[a-z0-9-]+\/(?:drive|video)\/[^"']+)["']/i);
+              if (!headingMatch || !hubMatch) continue;
+
+              const rawHeading = cleanTitle(headingMatch[1]);
+              const hubUrl = hubMatch[1];
               const qMatch = rawHeading.match(/(480p|720p|1080p|2160p|4k)/i);
               const sMatch = rawHeading.match(/([0-9.]+\s*(?:MB|GB|Mb|Gb))/i);
               const q = qMatch ? qMatch[1].toLowerCase() : (qualities.length === 0 ? '480p' : (qualities.length === 1 ? '720p' : '1080p'));
@@ -1294,7 +1892,7 @@ app.get('/api/post', async (req, res) => {
               const isHevc = /hevc/i.test(rawHeading);
               const label = isHevc ? `${q.toUpperCase()} (HEVC)` : q;
 
-              if (!seenTiers.has(label) && qualities.length < 4) {
+              if (!seenTiers.has(label) && qualities.length < 5) {
                 seenTiers.add(label);
                 qualities.push({
                   quality: label,
@@ -1304,6 +1902,36 @@ app.get('/api/post', async (req, res) => {
                   directDownloadUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=direct`,
                   hdCloudUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=hd_cloud`
                 });
+              }
+            }
+
+            // Fallback link regex if section matching was empty
+            if (qualities.length === 0) {
+              const linkDivRegex = /<(?:h[2-6]|p)[^>]*>([\s\S]*?)<\/(?:h[2-6]|p)>[\s\S]*?<a[^>]+href=["'](https?:\/\/[^"']*hubcloud\.[a-z0-9-]+\/(?:drive|video)\/[^"']+)["']/gi;
+              let divMatch;
+              while ((divMatch = linkDivRegex.exec(mLinksHtml)) !== null) {
+                const rawHeading = cleanTitle(divMatch[1]);
+                const hubUrl = divMatch[2];
+
+                const qMatch = rawHeading.match(/(480p|720p|1080p|2160p|4k)/i);
+                const sMatch = rawHeading.match(/([0-9.]+\s*(?:MB|GB|Mb|Gb))/i);
+                const q = qMatch ? qMatch[1].toLowerCase() : (qualities.length === 0 ? '480p' : (qualities.length === 1 ? '720p' : '1080p'));
+                const s = sMatch ? sMatch[1].toUpperCase() : (q === '480p' ? '450MB' : (q === '720p' ? '1.2GB' : '2.9GB'));
+
+                const isHevc = /hevc/i.test(rawHeading);
+                const label = isHevc ? `${q.toUpperCase()} (HEVC)` : q;
+
+                if (!seenTiers.has(label) && qualities.length < 5) {
+                  seenTiers.add(label);
+                  qualities.push({
+                    quality: label,
+                    size: s,
+                    hubUrl,
+                    cloudDirectUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=cloud_direct`,
+                    directDownloadUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=direct`,
+                    hdCloudUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=hd_cloud`
+                  });
+                }
               }
             }
 
@@ -1330,6 +1958,25 @@ app.get('/api/post', async (req, res) => {
           }
         } catch (mErr) {
           console.warn('Error parsing m4ulinks:', mErr.message);
+        }
+      }
+
+      // If no m4ulinks found or parsed, inspect post HTML directly for HubCloud links
+      if (qualities.length === 0) {
+        const directHubLinks = [...html.matchAll(/href=["'](https?:\/\/[^"']*hubcloud\.[a-z0-9-]+\/(?:drive|video)\/[^"']+)["']/gi)].map(m => m[1]);
+        if (directHubLinks.length > 0) {
+          directHubLinks.slice(0, 4).forEach((hubUrl, idx) => {
+            const q = idx === 0 ? '480p' : (idx === 1 ? '720p' : (idx === 2 ? '1080p' : '2160p'));
+            const s = q === '480p' ? '450MB' : (q === '720p' ? '1.2GB' : (q === '1080p' ? '2.9GB' : '6.5GB'));
+            qualities.push({
+              quality: q,
+              size: s,
+              hubUrl,
+              cloudDirectUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=cloud_direct`,
+              directDownloadUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=direct`,
+              hdCloudUrl: `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=hd_cloud`
+            });
+          });
         }
       }
 
@@ -1515,7 +2162,7 @@ app.get('/api/cloud-direct-download', async (req, res) => {
     if (hubUrl) {
       if (hubUrl.includes('hubcdn.io')) {
         resolvedData = await resolveHubCdnTier(hubUrl);
-      } else if (hubUrl.includes('hubcloud.ist')) {
+      } else if (hubUrl.includes('hubcloud')) {
         resolvedData = await resolveHubCloudLink(hubUrl);
       }
     }
@@ -1605,7 +2252,41 @@ app.get('/api/cloud-direct-download', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. API: Direct Stream Download (Clean 302 direct delivery to prevent serverless timeouts)
+// 8. API: Filmyzilla Multi-Server Direct Download Resolver
+// ---------------------------------------------------------------------------
+app.get('/api/filmyzilla-download', async (req, res) => {
+  const serverId = req.query.serverId;
+  const serverNum = req.query.server || '1';
+  if (!serverId) {
+    return res.status(400).send('Missing serverId parameter');
+  }
+
+  const targetUrl = `https://www.filmyzilla74.com/verified/${serverId}/server_${serverNum}/`;
+  try {
+    const fetchRes = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': COMMON_HEADERS['User-Agent'],
+        'Referer': `https://www.filmyzilla74.com/server/${serverId}/`
+      },
+      redirect: 'manual'
+    });
+
+    if ([301, 302, 303, 307, 308].includes(fetchRes.status)) {
+      const loc = fetchRes.headers.get('location');
+      if (loc) {
+        const fullLoc = loc.startsWith('http') ? loc : `https://www.filmyzilla74.com${loc}`;
+        return res.redirect(fullLoc);
+      }
+    }
+    return res.redirect(targetUrl);
+  } catch (err) {
+    console.error('Error resolving Filmyzilla download:', err.message);
+    res.redirect(targetUrl);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 9. API: Direct Stream Download (Clean 302 direct delivery to prevent serverless timeouts)
 // ---------------------------------------------------------------------------
 app.get('/api/stream-download', async (req, res) => {
   const fileUrl = req.query.url;
@@ -1623,7 +2304,7 @@ app.get('/api/stream-download', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// 9. API: Video Streaming Proxy (Range Requests, Referer Injection & HLS Rewriter)
+// 10. API: Video Streaming Proxy (Range Requests, Referer Injection & HLS Rewriter)
 // ---------------------------------------------------------------------------
 app.get('/api/stream-video', async (req, res) => {
   const videoUrl = req.query.url;
@@ -1706,6 +2387,14 @@ app.get('/api/stream-video', async (req, res) => {
     }
 
     const nodeStream = Readable.fromWeb(videoRes.body);
+    nodeStream.on('error', (err) => {
+      // Gracefully ignore client abort / socket closed
+    });
+    res.on('close', () => {
+      try {
+        nodeStream.destroy();
+      } catch (e) {}
+    });
     nodeStream.pipe(res);
   } catch (err) {
     console.error('Error proxying video stream:', err.message);
@@ -1764,14 +2453,17 @@ app.get('/watch', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'watch.html'));
 });
 
-// Server listen on available port (only in standalone Node environment, not on Vercel)
+// Server listen on available port (only in standalone Node / Render environment, not on Vercel)
 function startServer(port) {
-  const server = app.listen(port, () => {
+  const host = '0.0.0.0';
+  const server = app.listen(port, host, () => {
     console.log(`===============================================`);
-    console.log(`ASI OTT Server running at: http://localhost:${port}`);
+    console.log(`ASI OTT Server running at: http://${host}:${port}`);
+    console.log(`Environment:               ${process.env.RENDER ? 'Render.com Web Service' : (process.env.NODE_ENV || 'development')}`);
     console.log(`Production Domain:         ${PROD_DOMAIN}`);
-    console.log(`Home / Search:             http://localhost:${port}`);
-    console.log(`Watch Page:                http://localhost:${port}/watch`);
+    console.log(`Health Check:              http://${host}:${port}/health`);
+    console.log(`Home / Search:             http://${host}:${port}`);
+    console.log(`Watch Page:                http://${host}:${port}/watch`);
     console.log(`===============================================`);
   });
 
