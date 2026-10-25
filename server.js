@@ -763,7 +763,7 @@ async function fetchMicroTvHtml(targetUrl) {
     const res = await fetch(targetUrl, {
       headers: {
         ...COMMON_HEADERS,
-        'Referer': 'https://new.microtv.st/'
+        'Referer': 'https:/m.microtv.st/'
       },
       signal: controller.signal
     });
@@ -2024,11 +2024,11 @@ app.get('/api/post', async (req, res) => {
 
       if (!html) {
         try {
-          const searchHtml = await fetchMicroTvHtml(`https://new.microtv.st/search?q=${encodeURIComponent(cleanSlug.replace(/[-_]/g, ' '))}`);
+          const searchHtml = await fetchMicroTvHtml(`https://m.microtv.st/search?q=${encodeURIComponent(cleanSlug.replace(/[-_]/g, ' '))}`);
           if (searchHtml) {
-            const postMatch = searchHtml.match(/<a\s+[^>]*href=["'](?:https?:\/\/new\.microtv\.st)?\/post\/([^"']+)["']/i);
+            const postMatch = searchHtml.match(/<a\s+[^>]*href=["'](?:https?:\/\/m\.microtv\.st)?\/post\/([^"']+)["']/i);
             if (postMatch) {
-              html = await fetchMicroTvHtml(`https://new.microtv.st/post/${encodeURIComponent(postMatch[1])}`);
+              html = await fetchMicroTvHtml(`https://m.microtv.st/post/${encodeURIComponent(postMatch[1])}`);
             }
           }
         } catch (mErr) {
