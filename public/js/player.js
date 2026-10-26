@@ -8,8 +8,11 @@
  * 5. "Cloud Direct", "Direct Download", and "HD Cloud" buttons with direct file download initiation
  */
 
+const RENDER_BACKEND = 'https://asi-ott.onrender.com';
 const VERCEL_BACKEND = 'https://asiott.vercel.app';
-const API_BASE = '';
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? ''
+  : RENDER_BACKEND;
 
 /**
  * Resilient Post Fetch Helper
@@ -898,8 +901,8 @@ async function prefetchDirectStreamChunk() {
   forwardPrefetchActive = true;
   try {
     const streamUrl = seriesData.directStreamUrl.startsWith('http')
-      ? `/api/stream-video?url=${encodeURIComponent(seriesData.directStreamUrl)}`
-      : seriesData.directStreamUrl;
+      ? `${API_BASE}/api/stream-video?url=${encodeURIComponent(seriesData.directStreamUrl)}`
+      : (seriesData.directStreamUrl.startsWith('/api/') ? `${API_BASE}${seriesData.directStreamUrl}` : seriesData.directStreamUrl);
     await fetch(streamUrl, {
       headers: { 'Range': 'bytes=0-1048576' }
     }).catch(() => {});

@@ -8,8 +8,11 @@
  * - Direct watch redirection to watch.html?id=...&source=...
  */
 
+const RENDER_BACKEND = 'https://asi-ott.onrender.com';
 const VERCEL_BACKEND = 'https://asiott.vercel.app';
-const API_BASE = '';
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? ''
+  : RENDER_BACKEND;
 
 // State
 let currentCategory = 'all';
