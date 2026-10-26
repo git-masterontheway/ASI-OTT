@@ -937,8 +937,8 @@ const MICROTV_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes standard cache
 const MICROTV_PAGE1_CACHE_TTL_MS = 30 * 1000; // 30 seconds for page 1 so newly uploaded dramas appear immediately!
 
 /**
- * Dynamic live fetcher for m.microtv.st with concurrent anti-blocking strategies (Promise.any).
- * Resolves within 1 second on both local machines and cloud hosting environments (Render / Vercel).
+ * Dynamic live fetcher for m.microtv.st with concurrent anti-blocking strategies.
+ * Seamlessly resolves in sub-second time on local machines and cloud hosting environments (Render / Vercel).
  */
 async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
   if (!targetUrl) return null;
@@ -955,24 +955,7 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
   const activeMicro = await getActiveMicroTvBase();
 
   const fetchers = [
-    // 1. Direct fetch with Googlebot crawler headers (Instant bypass on Cloudflare)
-    async () => {
-      const res = await fetch(targetUrl, {
-        headers: {
-          ...MICROTV_CRAWLER_HEADERS,
-          'Referer': `${activeMicro}/`
-        },
-        signal: AbortSignal.timeout(3500)
-      });
-      if (!res.ok) throw new Error(`Crawler status ${res.status}`);
-      const text = await res.text();
-      if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
-        throw new Error('Crawler challenged');
-      }
-      return text;
-    },
-
-    // 2. Direct browser fetch (Fastest for local / broadband IPs)
+    // Strategy 1: Direct fetch with browser headers (Fastest for local / broadband IPs, ~200ms)
     async () => {
       const res = await fetch(targetUrl, {
         headers: {
@@ -989,112 +972,48 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
       return text;
     },
 
-    // 3. Jina AI reader with timestamp cachebuster (Universal bypass for cloud datacenter IPs)
+    // Strategy 2: Cloudflare Workers edge reader (markdown.new) with retain_images (Universal bypass on Render, ~800ms)
     async () => {
-      const separator = targetUrl.includes('?') ? '&' : '?';
-      const jinaTarget = `${targetUrl}${separator}_cb=${Date.now()}`;
-      const jinaUrl = `https://r.jina.ai/${jinaTarget}`;
-      const jRes = await fetch(jinaUrl, {
-        headers: {
-          'X-Return-Format': 'html',
-          'X-No-Cache': 'true'
-        },
-        signal: AbortSignal.timeout(8000)
+      const r = await fetch('https://markdown.new/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl, retain_images: true }),
+        signal: AbortSignal.timeout(6500)
       });
-      if (!jRes.ok) throw new Error(`Jina status ${jRes.status}`);
-      const html = await jRes.text();
-      if (html.length < 500 || html.includes('Just a moment...')) {
-        throw new Error('Jina challenged or empty');
-      }
-      return html;
+      if (!r.ok) throw new Error(`markdown.new status ${r.status}`);
+      const json = await r.json();
+      const content = json.content || '';
+      if (content.length < 200) throw new Error('markdown.new empty content');
+      return content;
     },
 
-    // 4. allorigins proxy fallback
+    // Strategy 3: markdown.new GET fallback
     async () => {
-      const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
-      const pRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
-      if (!pRes.ok) throw new Error(`AllOrigins status ${pRes.status}`);
-      const text = await pRes.text();
-      if (text.length < 500 || text.includes('Just a moment...')) {
-        throw new Error('AllOrigins challenged or empty');
-      }
+      const r = await fetch('https://markdown.new/' + targetUrl, { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error(`markdown.new GET status ${r.status}`);
+      const text = await r.text();
+      if (text.length < 200) throw new Error('markdown.new GET empty');
       return text;
     }
   ];
 
   try {
-    const html = await Promise.any(fetchers.map(fn => fn()));
-    if (html && html.length > 500) {
-      MICROTV_CACHE.set(targetUrl, { data: html, expiresAt: Date.now() + cacheTtl });
-      return html;
+    const content = await Promise.any(fetchers.map(fn => fn()));
+    if (content && content.length > 200) {
+      MICROTV_CACHE.set(targetUrl, { data: content, expiresAt: Date.now() + cacheTtl });
+      return content;
     }
   } catch (err) {
-    console.warn('[MicroTV Scraper] All concurrent strategies failed for:', targetUrl);
+    console.warn('[MicroTV Scraper] All live fetch strategies failed for:', targetUrl);
   }
 
   return null;
 }
 
-app.get('/api/microtv-debug', async (req, res) => {
-  const targetUrl = req.query.url || 'https://m.microtv.st/post/love-sex-aur-professor-full-episode';
-  const results = {};
-
-  // 1. markdown.new GET
-  try {
-    const r = await fetch('https://markdown.new/' + targetUrl, { signal: AbortSignal.timeout(6000) });
-    const t = await r.text();
-    results.markdownNew = { status: r.status, len: t.length, snippet: t.slice(0, 200) };
-  } catch (e) { results.markdownNew = { error: e.message }; }
-
-  // 2. markdown.new POST with browser
-  try {
-    const r = await fetch('https://markdown.new/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: targetUrl, method: 'browser' }),
-      signal: AbortSignal.timeout(8000)
-    });
-    const t = await r.text();
-    results.markdownNewBrowser = { status: r.status, len: t.length, snippet: t.slice(0, 200) };
-  } catch (e) { results.markdownNewBrowser = { error: e.message }; }
-
-  // 2. Allorigins JSON
-  try {
-    const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(targetUrl), { signal: AbortSignal.timeout(6000) });
-    const j = await r.json();
-    results.alloriginsJson = { status: r.status, len: j.contents?.length || 0, hasIframe: (j.contents || '').includes('<iframe') };
-  } catch (e) { results.alloriginsJson = { error: e.message }; }
-
-  // 3. Corsproxy.io
-  try {
-    const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), { signal: AbortSignal.timeout(6000) });
-    const t = await r.text();
-    results.corsproxy = { status: r.status, len: t.length, hasIframe: t.includes('<iframe') };
-  } catch (e) { results.corsproxy = { error: e.message }; }
-
-  // 4. Jsonp.afeld.me
-  try {
-    const r = await fetch('https://jsonp.afeld.me/?url=' + encodeURIComponent(targetUrl), { signal: AbortSignal.timeout(6000) });
-    const t = await r.text();
-    results.jsonpAfeld = { status: r.status, len: t.length, hasIframe: t.includes('<iframe') };
-  } catch (e) { results.jsonpAfeld = { error: e.message }; }
-
-  // 5. Google Translate mirror
-  try {
-    const gUrl = 'https://translate.google.com/translate?sl=auto&tl=en&u=' + encodeURIComponent(targetUrl);
-    const r = await fetch(gUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-      signal: AbortSignal.timeout(6000)
-    });
-    const t = await r.text();
-    results.googleTranslate = { status: r.status, len: t.length };
-  } catch (e) { results.googleTranslate = { error: e.message }; }
-
-  return res.json(results);
-});
-
 function parseMicroTvCards(html) {
   const cards = [];
+
+  // 1. Try HTML post-card extraction
   const cardRegex = /<div\s+class=["']post-card["']>([\s\S]*?)<\/div>/gi;
   let match;
 
@@ -1129,6 +1048,32 @@ function parseMicroTvCards(html) {
         category: 'Mini Drama',
         quality: 'HD Stream'
       });
+    }
+  }
+
+  // 2. If no cards found from HTML, parse from Markdown format (from Cloudflare edge reader on Render)
+  if (cards.length === 0) {
+    const mdRegex = /\[\s*(?:!\[([^\]]*)\]\(([^)]+)\))?\s*([\s\S]*?)\s*(?:👁️\s*([0-9,]+)\s*views)?\s*\]\((?:https?:\/\/[^\/]+)?\/post\/([a-zA-Z0-9_-]+)\)/gi;
+    let mdMatch;
+    while ((mdMatch = mdRegex.exec(html)) !== null) {
+      const altTitle = mdMatch[1];
+      const thumbnail = mdMatch[2] || '';
+      let textTitle = mdMatch[3] ? mdMatch[3].replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim() : '';
+      const rawViews = mdMatch[4] || '1800';
+      const slug = mdMatch[5];
+      let title = cleanTitle(altTitle || textTitle || slug);
+      if (slug && !cards.some(c => c.slug === slug)) {
+        cards.push({
+          id: `microtv_${slug}`,
+          slug,
+          title: title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          thumbnail,
+          views: formatViewCount(rawViews),
+          source: 'MicroTV',
+          category: 'Mini Drama',
+          quality: 'HD Stream'
+        });
+      }
     }
   }
 
@@ -2662,21 +2607,28 @@ app.get('/api/post', async (req, res) => {
       }
 
       // Title
-      const titleMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+      const titleMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) ||
+        html.match(/#\s+([^\n]+)/) ||
+        html.match(/title:\s*["']?([^"'\n]+)/i);
       const title = cleanTitle(titleMatch ? titleMatch[1] : slug);
 
       // Featured Poster
       const posterMatch = html.match(/<img[^>]+?\bsrc=["']([^"']+)["'][^>]*class=["'][^"']*featured-poster/i) ||
-        html.match(/<img[^>]+class=["'][^"']*featured-poster[^"']*["'][^>]+?\bsrc=["']([^"']+)["']/i);
-      const poster = posterMatch ? posterMatch[1] : '';
+        html.match(/<img[^>]+class=["'][^"']*featured-poster[^"']*["'][^>]+?\bsrc=["']([^"']+)["']/i) ||
+        html.match(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i);
+      let poster = posterMatch ? posterMatch[1] : '';
+      if (!poster) {
+        const seedItem = MICROTV_SEED_CATALOG.find(it => it.slug === cleanSlug || it.id === `microtv_${cleanSlug}`);
+        if (seedItem && seedItem.thumbnail) poster = seedItem.thumbnail;
+      }
 
       // Video Embed Player iframe src
       const iframeMatch = html.match(/<div class=["']embed-player["'][\s\S]*?<iframe\s+[^>]*src=["']([^"']+)["']/i) ||
         html.match(/<iframe\s+[^>]*src=["']([^"']+)["']/i);
-      const embedUrl = iframeMatch ? iframeMatch[1] : '';
+      let embedUrl = iframeMatch ? iframeMatch[1] : '';
 
-      // Download PHP handler link
-      const downloadMatch = html.match(/<a\s+[^>]*href=["'](https?:\/\/[^"']*download\.php[^"']*)["']/i);
+      // Download PHP handler link (supports both HTML href and Markdown links)
+      const downloadMatch = html.match(/(?:href=["']|\()([^"'\s\)]*download\.php[^"'\s\)]*)/i);
       const downloadPhpUrl = downloadMatch ? downloadMatch[1] : '';
 
       // Pre-resolve direct stream & media file URL via Fast Cloud (FSL R2)
@@ -2703,6 +2655,9 @@ app.get('/api/post', async (req, res) => {
             directStreamUrl = fslRes.headers.get('location');
 
             if (directStreamUrl) {
+              if (!embedUrl) {
+                embedUrl = directStreamUrl;
+              }
               try {
                 const headRes = await fetch(directStreamUrl, {
                   method: 'HEAD',
