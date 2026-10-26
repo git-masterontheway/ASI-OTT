@@ -49,24 +49,6 @@ You can access and test the live running deployment of ASI OTT through any of th
 
 ---
 
-## ✨ What's New in Version 2.4.0 (Latest Release)
-
-### 🐉 1. Complete "Anime" Category Integration (`toonworld4all.me`)
-- **Direct Upstream Referer**: Integrated `https://toonworld4all.me/` featuring 230+ pages and 2,300+ anime titles across subbed and dubbed releases.
-- **Dedicated Homepage Tab & Selector**: Added **Anime** tab with dynamic dragon badge (`fa-dragon`) on the main homepage navigation and search category filter.
-- **Interactive Multi-Episode Selector**: Modern horizontal carousel on `watch.html` allowing instant 1-click episode switching with active indicators without page reloads.
-- **Clean 3-Tier Quality Architecture**: Strict filtering to the 3 standard resolutions:
-  - **480p** (Ultra-compact mobile playback & low bandwidth)
-  - **720p** (Crisp HD streaming & balanced downloads)
-  - **1080p** (Full HD master encode with multi-audio / 10bit HEVC)
-- **Top 3 Direct Cloud Download Hosts**: Automatic pre-resolution bypassing external ad shorteners directly to official high-speed cloud storage:
-  - **HubCloud** (`hubcloud.ist`) — 10Gbps Google Cloud CDN direct download & on-site streaming
-  - **Filepress** (`new2.filepress.lat`) — High-speed encrypted cloud storage
-  - **GDFlix** (`gdflix.dev`) — Google Drive high-speed direct mirror
-- **Direct On-Site Video Stream Playback**: Auto-resolves direct video stream streams into the custom HTML5 video player with buffered indicators, speed controls, and volume boost.
-
----
-
 ## ✨ What's New in Version 2.3.0 (Major Release)
 
 ### 🎬 1. Dedicated "Movies Central" Hub (`/movies.html`)
