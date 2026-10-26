@@ -91,6 +91,7 @@
             <i class="fa-solid fa-sliders dropdown-filter-icon"></i>
             <select id="search-category-select" class="search-category-select" aria-label="Select Content Category">
               <option value="all">All</option>
+              <option value="anime">Anime</option>
               <option value="mini_drama">Mini Drama</option>
               <option value="movies">Movies</option>
               <option value="tv_shows">TV Shows</option>
@@ -108,7 +109,7 @@
               type="text" 
               id="search-input" 
               class="search-input-field" 
-              placeholder="Search content, movies, series, dramas..." 
+              placeholder="Search anime, movies, series, dramas..." 
               autocomplete="off"
             >
             <button type="button" id="search-clear-btn" class="search-clear-btn" title="Clear search" style="display: none;">
@@ -126,6 +127,9 @@
       <div class="category-tabs-wrapper" id="category-tabs">
         <button class="cat-tab active" data-category="all">
           <i class="fa-solid fa-border-all"></i> All
+        </button>
+        <button class="cat-tab" data-category="anime">
+          <i class="fa-solid fa-dragon"></i> Anime
         </button>
         <button class="cat-tab" data-category="mini_drama">
           <i class="fa-solid fa-mobile-screen"></i> Mini Drama

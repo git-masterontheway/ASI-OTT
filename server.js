@@ -78,6 +78,7 @@ const VIEWS_FILE = path.join(DATA_DIR, 'views.json');
 let MICROTV_SEED_CATALOG = [];
 let MICROTV_PAGES_CATALOG = {};
 let MICROTV_POSTS_CACHE = {};
+let ANIME_SEED_CATALOG = [];
 try {
   const seedPath = path.join(__dirname, 'data', 'microtv_seed.json');
   if (fs.existsSync(seedPath)) {
@@ -94,8 +95,13 @@ try {
     MICROTV_POSTS_CACHE = JSON.parse(fs.readFileSync(cachePath, 'utf8') || '{}');
     console.log(`[MicroTV Cache] Loaded ${Object.keys(MICROTV_POSTS_CACHE).length} pre-resolved posts`);
   }
+  const animeSeedPath = path.join(__dirname, 'data', 'anime_seed.json');
+  if (fs.existsSync(animeSeedPath)) {
+    ANIME_SEED_CATALOG = JSON.parse(fs.readFileSync(animeSeedPath, 'utf8') || '[]');
+    console.log(`[Anime Seed] Loaded ${ANIME_SEED_CATALOG.length} anime catalog items`);
+  }
 } catch (e) {
-  console.warn('[MicroTV Cache] Failed to load static seed/cache:', e.message);
+  console.warn('[MicroTV Cache / Anime Seed] Failed to load static seed/cache:', e.message);
 }
 
 // Ensure data folder exists
@@ -540,6 +546,18 @@ function getRefererForUrl(targetUrl) {
     }
     if (host.includes('microtv') || host.includes('xdl.my.id') || host.includes('playmate') || host.includes('r2.dev')) {
       return `${currentMicroTv}/`;
+    }
+    if (host.includes('toonworld') || host.includes('toonworld4all')) {
+      return 'https://toonworld4all.me/';
+    }
+    if (host.includes('archive.toonworld4all')) {
+      return 'https://archive.toonworld4all.me/';
+    }
+    if (host.includes('filepress')) {
+      return 'https://new2.filepress.lat/';
+    }
+    if (host.includes('gdflix')) {
+      return 'https://gdflix.dev/';
     }
     return `${u.protocol}//${u.host}/`;
   } catch (e) {
@@ -1086,6 +1104,218 @@ function parsePagination(html, requestedPage) {
 }
 
 // ---------------------------------------------------------------------------
+// 1b. SOURCE: Dynamic ToonWorld4All (toonworld4all.me / archive.toonworld4all.me) (Anime)
+// ---------------------------------------------------------------------------
+const TOONWORLD_BASE = 'https://toonworld4all.me';
+const ARCHIVE_TOONWORLD_BASE = 'https://archive.toonworld4all.me';
+
+function parseToonworldCards(html) {
+  const cards = [];
+  const articleMatches = [...html.matchAll(/<article[^>]*>([\s\S]*?)<\/article>/gi)];
+
+  for (const artMatch of articleMatches) {
+    const art = artMatch[1];
+    const linkMatch = art.match(/href=["'](https?:\/\/toonworld4all\.me\/([^\/'"]+)\/?)["']/i);
+    if (!linkMatch) continue;
+
+    const permalink = linkMatch[1];
+    const slug = linkMatch[2];
+
+    const titleMatch = art.match(/<h2[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i) ||
+      art.match(/alt=["']([^"']+)["']/i) ||
+      art.match(/title=["']([^"']+)["']/i);
+    const rawTitle = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : slug;
+    const title = cleanTitle(rawTitle);
+
+    const imgMatch = art.match(/src=["']([^"']+)["']/i);
+    let thumbnail = imgMatch ? imgMatch[1] : '';
+    const dataSrcMatch = art.match(/data-src=["']([^"']+)["']/i) || art.match(/data-lazy-src=["']([^"']+)["']/i);
+    if (dataSrcMatch && !thumbnail.startsWith('http')) {
+      thumbnail = dataSrcMatch[1];
+    }
+
+    cards.push({
+      id: `toonworld_${slug}`,
+      slug,
+      permalink,
+      title,
+      thumbnail,
+      views: `${(Math.floor(Math.random() * 25) + 12) / 10}k views`,
+      source: 'ToonWorld4All',
+      category: 'Anime',
+      quality: '480p | 720p | 1080p'
+    });
+  }
+
+  return cards;
+}
+
+let KNOWN_TOONWORLD_TOTAL_PAGES = 230;
+
+function parseToonworldPagination(html, requestedPage) {
+  const curPage = parseInt(requestedPage, 10) || 1;
+  const pageNumbers = new Set();
+  pageNumbers.add(curPage);
+
+  const pageMatches = [...html.matchAll(/\/category\/anime\/page\/([0-9]+)\/?/gi)];
+  pageMatches.forEach(m => {
+    const num = parseInt(m[1], 10);
+    if (!isNaN(num) && num > 0 && num < 1000) {
+      pageNumbers.add(num);
+      if (num > KNOWN_TOONWORLD_TOTAL_PAGES) {
+        KNOWN_TOONWORLD_TOTAL_PAGES = num;
+      }
+    }
+  });
+
+  const totalPages = Math.max(KNOWN_TOONWORLD_TOTAL_PAGES, curPage);
+  for (let i = 1; i <= Math.min(totalPages, 5); i++) {
+    pageNumbers.add(i);
+  }
+  pageNumbers.add(totalPages);
+
+  const sortedPages = Array.from(pageNumbers).sort((a, b) => a - b);
+
+  return {
+    currentPage: curPage,
+    totalPages,
+    hasNext: curPage < totalPages || html.includes('next page-numbers'),
+    hasPrev: curPage > 1 || html.includes('prev page-numbers'),
+    pages: sortedPages
+  };
+}
+
+async function fetchToonworldAnimeCatalog(page = 1) {
+  try {
+    const curPage = Math.max(1, parseInt(page, 10) || 1);
+    const catUrl = curPage > 1 ? `${TOONWORLD_BASE}/category/anime/page/${curPage}/` : `${TOONWORLD_BASE}/category/anime/`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(catUrl, {
+      headers: { ...COMMON_HEADERS, 'Referer': `${TOONWORLD_BASE}/` },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const html = await res.text();
+      const items = parseToonworldCards(html);
+      if (items.length > 0) {
+        const pagination = parseToonworldPagination(html, curPage);
+        return { items, pagination };
+      }
+    }
+  } catch (err) {
+    console.warn(`[ToonWorld] Catalog live fetch warning (page ${page}):`, err.message);
+  }
+
+  // Cloud deployment fallback (Render / Vercel Cloudflare challenge resilience)
+  if (ANIME_SEED_CATALOG.length > 0) {
+    const pageSize = 12;
+    const totalPages = Math.max(30, Math.ceil(ANIME_SEED_CATALOG.length / pageSize));
+    const curPage = Math.min(Math.max(1, parseInt(page, 10) || 1), totalPages);
+    const start = ((curPage - 1) * pageSize) % ANIME_SEED_CATALOG.length;
+    let items = ANIME_SEED_CATALOG.slice(start, start + pageSize);
+    if (items.length < pageSize) {
+      items = items.concat(ANIME_SEED_CATALOG.slice(0, pageSize - items.length));
+    }
+
+    const pageNumbers = new Set();
+    pageNumbers.add(curPage);
+    for (let i = 1; i <= Math.min(totalPages, 5); i++) pageNumbers.add(i);
+    if (curPage > 1) pageNumbers.add(curPage - 1);
+    if (curPage < totalPages) pageNumbers.add(curPage + 1);
+    pageNumbers.add(totalPages);
+
+    return {
+      items,
+      pagination: {
+        currentPage: curPage,
+        totalPages,
+        hasNext: curPage < totalPages,
+        hasPrev: curPage > 1,
+        pages: Array.from(pageNumbers).sort((a, b) => a - b)
+      }
+    };
+  }
+
+  return {
+    items: [],
+    pagination: {
+      currentPage: 1,
+      totalPages: 1,
+      hasNext: false,
+      hasPrev: false,
+      pages: [1]
+    }
+  };
+}
+
+async function fetchToonworldSearch(query) {
+  if (!query) return [];
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const searchUrl = `${TOONWORLD_BASE}/?s=${encodeURIComponent(query)}`;
+    const res = await fetch(searchUrl, {
+      headers: { ...COMMON_HEADERS, 'Referer': `${TOONWORLD_BASE}/` },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const html = await res.text();
+      const items = parseToonworldCards(html);
+      if (items.length > 0) return items;
+    }
+  } catch (err) {
+    console.warn(`[ToonWorld] Search live fetch warning for "${query}":`, err.message);
+  }
+
+  // Fallback to seed catalog search
+  if (ANIME_SEED_CATALOG.length > 0) {
+    const q = query.toLowerCase();
+    return ANIME_SEED_CATALOG.filter(it => (it.title || '').toLowerCase().includes(q) || (it.slug || '').toLowerCase().includes(q));
+  }
+  return [];
+}
+
+async function resolveToonworldRedirect(redirectPath, referer) {
+  if (!redirectPath) return null;
+  const fullUrl = redirectPath.startsWith('http') ? redirectPath : `${ARCHIVE_TOONWORLD_BASE}${redirectPath}`;
+  const cached = RESOLVER_CACHE.get(fullUrl);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch(fullUrl, {
+      headers: { ...COMMON_HEADERS, 'Referer': referer || `${ARCHIVE_TOONWORLD_BASE}/` },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+
+    const html = await res.text();
+    const match = html.match(/window\.__PROPS__\s*=\s*({[\s\S]*?});/);
+    if (match) {
+      const props = JSON.parse(match[1]);
+      const { domain, hidden } = props.link || {};
+      if (domain && hidden) {
+        const resolved = `${domain}${hidden}`;
+        RESOLVER_CACHE.set(fullUrl, { data: resolved, expiresAt: Date.now() + RESOLVER_TTL_MS });
+        return resolved;
+      }
+    }
+  } catch (e) {
+    console.warn('Toonworld redirect resolve warning:', e.message);
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // 2. SOURCE: Dynamic Movies4u (movies4u.nf / movies4u.bot) (Movies & Series)
 // ---------------------------------------------------------------------------
 async function fetchMovies4uSearch(query) {
@@ -1562,7 +1792,11 @@ app.get('/api/content', async (req, res) => {
       pages: [1, 2, 3, 4, 5, 33]
     };
 
-    if (categoryFilter === 'mini_drama' || categoryFilter === 'mini drama' || categoryFilter === 'mini-drama' || categoryFilter === 'dramas') {
+    if (categoryFilter === 'anime') {
+      const animeData = await fetchToonworldAnimeCatalog(page);
+      allItems = animeData.items;
+      pagination = animeData.pagination;
+    } else if (categoryFilter === 'mini_drama' || categoryFilter === 'mini drama' || categoryFilter === 'mini-drama' || categoryFilter === 'dramas') {
       // Dynamic real-time scraping of m.microtv.st for Mini Drama
       const microTvUrl = page > 1 ? `${MICROTV_BASE}/?page=${page}` : `${MICROTV_BASE}/`;
       const html = await fetchMicroTvHtml(microTvUrl);
@@ -1687,12 +1921,13 @@ app.get('/api/content', async (req, res) => {
         pages: [1, 2, 3, 4, 5, 30]
       };
     } else {
-      // Default: Interleaved Aggregation across MicroTV, Movies4u & HDWall
+      // Default: Interleaved Aggregation across MicroTV, Movies4u, HDWall & ToonWorld (Anime)
       const microTvUrl = page > 1 ? `${MICROTV_BASE}/?page=${page}` : `${MICROTV_BASE}/`;
-      const [microHtml, m4uItems, hdwallItems] = await Promise.allSettled([
+      const [microHtml, m4uItems, hdwallItems, animeData] = await Promise.allSettled([
         fetchMicroTvHtml(microTvUrl),
         fetchMovies4uHome(page),
-        fetchHdwallHome(page)
+        fetchHdwallHome(page),
+        fetchToonworldAnimeCatalog(page)
       ]);
 
       let microItems = [];
@@ -1713,12 +1948,14 @@ app.get('/api/content', async (req, res) => {
 
       const m4uList = m4uItems.status === 'fulfilled' ? m4uItems.value : [];
       const hdList = hdwallItems.status === 'fulfilled' ? hdwallItems.value : [];
+      const animeList = (animeData.status === 'fulfilled' && animeData.value?.items) ? animeData.value.items : [];
 
-      const maxLen = Math.max(microItems.length, m4uList.length, hdList.length);
+      const maxLen = Math.max(microItems.length, m4uList.length, hdList.length, animeList.length);
       for (let i = 0; i < maxLen; i++) {
         if (i < microItems.length) allItems.push(microItems[i]);
         if (i < m4uList.length) allItems.push(m4uList[i]);
         if (i < hdList.length) allItems.push(hdList[i]);
+        if (i < animeList.length) allItems.push(animeList[i]);
       }
     }
 
@@ -1859,33 +2096,41 @@ app.get('/api/search', async (req, res) => {
     // 4. Query Filmyzilla sitemap index search
     const filmyzillaPromise = fetchFilmyzillaSearch(query);
 
-    // Run all 4 queries concurrently
-    const [microRes, m4uRes, hdwallRes, filmyRes] = await Promise.allSettled([
+    // 5. Query ToonWorld Anime search
+    const toonworldPromise = fetchToonworldSearch(query);
+
+    // Run all 5 queries concurrently
+    const [microRes, m4uRes, hdwallRes, filmyRes, toonRes] = await Promise.allSettled([
       microTvPromise,
       m4uPromise,
       hdwallPromise,
-      filmyzillaPromise
+      filmyzillaPromise,
+      toonworldPromise
     ]);
 
     let microResults = (!noDrama && microRes.status === 'fulfilled') ? microRes.value : [];
     const m4uResults = m4uRes.status === 'fulfilled' ? m4uRes.value : [];
     const hdwallResults = hdwallRes.status === 'fulfilled' ? hdwallRes.value : [];
     const filmyResults = filmyRes.status === 'fulfilled' ? filmyRes.value : [];
+    const toonResults = toonRes.status === 'fulfilled' ? toonRes.value : [];
 
-    console.log(`Search "${query}" counts: MicroTV=${microResults.length}, Movies4u=${m4uResults.length}, HDWall=${hdwallResults.length}, Filmyzilla=${filmyResults.length}`);
+    console.log(`Search "${query}" counts: MicroTV=${microResults.length}, Movies4u=${m4uResults.length}, HDWall=${hdwallResults.length}, Filmyzilla=${filmyResults.length}, ToonWorld=${toonResults.length}`);
 
-    // Aggregate results from all 4 sources
+    // Aggregate results from all 5 sources
     let combined = [];
-    const maxLen = Math.max(microResults.length, m4uResults.length, hdwallResults.length, filmyResults.length);
+    const maxLen = Math.max(microResults.length, m4uResults.length, hdwallResults.length, filmyResults.length, toonResults.length);
     for (let i = 0; i < maxLen; i++) {
       if (i < microResults.length) combined.push(microResults[i]);
       if (i < m4uResults.length) combined.push(m4uResults[i]);
       if (i < hdwallResults.length) combined.push(hdwallResults[i]);
       if (i < filmyResults.length) combined.push(filmyResults[i]);
+      if (i < toonResults.length) combined.push(toonResults[i]);
     }
 
     // Apply category filtering if requested
-    if (categoryFilter === 'mini_drama' || categoryFilter === 'mini drama' || categoryFilter === 'dramas') {
+    if (categoryFilter === 'anime') {
+      combined = combined.filter(i => i.category === 'Anime');
+    } else if (categoryFilter === 'mini_drama' || categoryFilter === 'mini drama' || categoryFilter === 'dramas') {
       combined = combined.filter(i => i.category === 'Mini Drama');
     } else if (categoryFilter === 'movies') {
       combined = combined.filter(i => i.category === 'Movies');
@@ -1904,7 +2149,8 @@ app.get('/api/search', async (req, res) => {
         microtv: microResults.length,
         movies4u: m4uResults.length,
         hdwall: hdwallResults.length,
-        filmyzilla: filmyResults.length
+        filmyzilla: filmyResults.length,
+        toonworld: toonResults.length
       },
       pagination: {
         currentPage: page,
@@ -1945,17 +2191,219 @@ app.get('/api/post', async (req, res) => {
   } else if (slug.startsWith('filmyzilla_')) {
     source = 'Filmyzilla';
     slug = slug.replace(/^filmyzilla_/, '');
+  } else if (slug.startsWith('toonworld_')) {
+    source = 'ToonWorld4All';
+    slug = slug.replace(/^toonworld_/, '');
   }
 
   if (!source) {
-    if (req.query.url && req.query.url.includes('filmyzilla')) source = 'Filmyzilla';
+    if (req.query.url && (req.query.url.includes('toonworld') || req.query.url.includes('archive.toonworld4all'))) source = 'ToonWorld4All';
+    else if (req.query.url && req.query.url.includes('filmyzilla')) source = 'Filmyzilla';
     else if (slug.endsWith('.html')) source = 'HDWall';
     else if (slug.includes('drishyam') || slug.includes('movie') || slug.includes('series')) source = 'Movies4u';
     else source = 'MicroTV';
   }
 
   try {
-    if (source === 'Filmyzilla') {
+    if (source === 'ToonWorld4All') {
+      // ---------------- ToonWorld4All Anime Detail Handler ----------------
+      const cleanSlug = slug.replace(/^\/+|\/+$/g, '').replace(/^toonworld_/, '');
+      const postUrl = `${TOONWORLD_BASE}/${cleanSlug}/`;
+
+      let postHtml = null;
+      try {
+        const pRes = await fetch(postUrl, {
+          headers: { ...COMMON_HEADERS, 'Referer': `${TOONWORLD_BASE}/` },
+          signal: AbortSignal.timeout(7000)
+        });
+        if (pRes.ok) {
+          postHtml = await pRes.text();
+        }
+      } catch (e) {
+        console.warn(`[ToonWorld] Post fetch error for ${cleanSlug}:`, e.message);
+      }
+
+      // Title & Poster
+      let title = cleanSlug.replace(/[-_]+/g, ' ');
+      let poster = '';
+
+      if (postHtml) {
+        const hTitleMatch = postHtml.match(/<h1[^>]*class=["'][^"']*entry-title[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i) ||
+          postHtml.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) ||
+          postHtml.match(/<title>([\s\S]*?)<\/title>/i);
+        if (hTitleMatch) {
+          title = cleanTitle(hTitleMatch[1]);
+        }
+        const ogImgMatch = postHtml.match(/<meta property=["']og:image["'] content=["']([^"']+)["']/i) ||
+          postHtml.match(/<img[^>]+src=["']([^"']*iili\.io[^"']+)["']/i) ||
+          postHtml.match(/<div class=["']entry-content[^"']*["']>[\s\S]*?<img[^>]+src=["']([^"']+)["']/i);
+        if (ogImgMatch) {
+          poster = ogImgMatch[1];
+        }
+      }
+
+      // Fallback poster/title from seed catalog if needed
+      if (!poster || !title) {
+        const seedItem = ANIME_SEED_CATALOG.find(it => it.slug === cleanSlug || it.id === `toonworld_${cleanSlug}`);
+        if (seedItem) {
+          if (!poster) poster = seedItem.thumbnail;
+          if (!title || title === cleanSlug) title = seedItem.title;
+        }
+      }
+
+      // Extract all episodes from postHtml
+      const episodes = [];
+      if (postHtml) {
+        const epRegex = /<a[^>]+href=["'](https?:\/\/archive\.toonworld4all\.me\/(?:episode|movie)\/([^\/'"]+))["'][^>]*>([\s\S]*?)<\/a>/gi;
+        let epMatch;
+        let epCount = 0;
+        const seenHashes = new Set();
+        while ((epMatch = epRegex.exec(postHtml)) !== null) {
+          const epUrl = epMatch[1];
+          const epHash = epMatch[2];
+          if (seenHashes.has(epHash)) continue;
+          seenHashes.add(epHash);
+          epCount++;
+          episodes.push({
+            episodeNumber: epCount,
+            title: `Episode ${epCount}`,
+            url: epUrl,
+            hash: epHash
+          });
+        }
+      }
+
+      // Determine active episode URL
+      let activeEpUrl = (req.query.episodeUrl || '').trim();
+      let currentEpisodeIndex = 0;
+
+      if (activeEpUrl && episodes.length > 0) {
+        const idx = episodes.findIndex(ep => ep.url === activeEpUrl || ep.hash === activeEpUrl);
+        if (idx !== -1) {
+          currentEpisodeIndex = idx;
+          activeEpUrl = episodes[idx].url;
+        }
+      }
+
+      if (!activeEpUrl && episodes.length > 0) {
+        activeEpUrl = episodes[0].url;
+        currentEpisodeIndex = 0;
+      }
+
+      const qualities = [];
+      let directStreamUrl = null;
+      let embedUrl = null;
+
+      if (activeEpUrl) {
+        try {
+          const epRes = await fetch(activeEpUrl, {
+            headers: { ...COMMON_HEADERS, 'Referer': postUrl },
+            signal: AbortSignal.timeout(7000)
+          });
+          if (epRes.ok) {
+            const epHtml = await epRes.text();
+            const propsMatch = epHtml.match(/window\.__PROPS__\s*=\s*({[\s\S]*?});/);
+            if (propsMatch) {
+              const props = JSON.parse(propsMatch[1]);
+              const rawEncodes = props.data?.data?.encodes || [];
+
+              // USER REQUIREMENT: Show ONLY three qualities: 480p, 720p, 1080p
+              const targetQualities = ['480p', '720p', '1080p'];
+              for (const q of targetQualities) {
+                // Find best encode matching resolution
+                const encode = rawEncodes.find(e => (e.resolution || '').toLowerCase() === q || (e.resolution || '').toLowerCase().includes(q));
+                if (!encode) continue;
+
+                const files = encode.files || [];
+                // USER REQUIREMENT: 3 downloading host URLs:
+                // HubCloud (hubcloud.ist), Filepress (new2.filepress.lat), GDFlix (gdflix.dev)
+                const hubFile = files.find(f => (f.host || '').toLowerCase().includes('hubcloud') || (f.short || '').includes('hubcloud'));
+                const filepressFile = files.find(f => (f.host || '').toLowerCase().includes('filepress') || (f.short || '').includes('filepress'));
+                const gdflixFile = files.find(f => (f.host || '').toLowerCase().includes('gdflix') || (f.short || '').includes('gdflix'));
+
+                // Resolve the 3 requested cloud storage hosts concurrently
+                const [hubcloudUrl, filepressUrl, gdflixUrl] = await Promise.all([
+                  hubFile ? resolveToonworldRedirect(hubFile.link, activeEpUrl) : null,
+                  filepressFile ? resolveToonworldRedirect(filepressFile.link, activeEpUrl) : null,
+                  gdflixFile ? resolveToonworldRedirect(gdflixFile.link, activeEpUrl) : null
+                ]);
+
+                const chosenHub = hubcloudUrl || filepressUrl || gdflixUrl || postUrl;
+                qualities.push({
+                  quality: q,
+                  size: encode.readable?.size || (q === '480p' ? '85 MB' : (q === '720p' ? '180 MB' : '320 MB')),
+                  hubUrl: chosenHub,
+                  hubcloudUrl: hubcloudUrl || null,
+                  filepressUrl: filepressUrl || null,
+                  gdflixUrl: gdflixUrl || null,
+                  cloudDirectUrl: hubcloudUrl ? `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubcloudUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=cloud_direct` : (filepressUrl || gdflixUrl),
+                  directDownloadUrl: hubcloudUrl ? `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubcloudUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=direct` : (filepressUrl || gdflixUrl),
+                  hdCloudUrl: hubcloudUrl || filepressUrl || gdflixUrl || postUrl
+                });
+              }
+            }
+          }
+        } catch (epErr) {
+          console.warn(`[ToonWorld] Archive episode fetch error:`, epErr.message);
+        }
+      }
+
+      // Pre-resolve best direct stream option from HubCloud (first preference 720p or 480p)
+      const hubQual = qualities.find(q => q.hubcloudUrl) || qualities[0];
+      if (hubQual && hubQual.hubcloudUrl) {
+        try {
+          const resolvedHub = await resolveHubCloudLink(hubQual.hubcloudUrl);
+          if (resolvedHub) {
+            if (resolvedHub.streamUrl) directStreamUrl = resolvedHub.streamUrl;
+            if (resolvedHub.embedUrl) embedUrl = resolvedHub.embedUrl;
+          }
+        } catch (hErr) {
+          console.warn('[ToonWorld] HubCloud direct stream resolve warning:', hErr.message);
+        }
+      }
+
+      // Fallback default qualities if archive link parsing was empty
+      if (qualities.length === 0) {
+        const defaultTiers = [
+          { quality: '480p', size: '85 MB' },
+          { quality: '720p', size: '180 MB' },
+          { quality: '1080p', size: '320 MB' }
+        ];
+        defaultTiers.forEach(t => {
+          qualities.push({
+            quality: t.quality,
+            size: t.size,
+            hubUrl: postUrl,
+            hubcloudUrl: null,
+            filepressUrl: null,
+            gdflixUrl: null,
+            cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=${t.quality}&type=cloud_direct`,
+            directDownloadUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=${t.quality}&type=direct`,
+            hdCloudUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=${t.quality}&type=hd_cloud`
+          });
+        });
+      }
+
+      return res.json({
+        success: true,
+        slug: cleanSlug,
+        source: 'ToonWorld4All',
+        category: 'Anime',
+        title,
+        poster,
+        embedUrl,
+        directStreamUrl,
+        isPlayable: true,
+        unplayableMessage: null,
+        aspectRatio: 'theater',
+        episodes,
+        currentEpisode: currentEpisodeIndex + 1,
+        currentEpisodeUrl: activeEpUrl,
+        qualities,
+        originalViews: '18.4K views',
+        publishDate: 'Recent'
+      });
+    } else if (source === 'Filmyzilla') {
       // ---------------- Filmyzilla Detail Handler ----------------
       let movieUrl = null;
       let movieId = null;
