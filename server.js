@@ -937,8 +937,8 @@ const MICROTV_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes standard cache
 const MICROTV_PAGE1_CACHE_TTL_MS = 30 * 1000; // 30 seconds for page 1 so newly uploaded dramas appear immediately!
 
 /**
- * Dynamic live fetcher for m.microtv.st with anti-blocking crawler headers and multi-proxy failover.
- * Ensures Mini Drama works seamlessly even on cloud hosting IPs (e.g. Render/Vercel) where Cloudflare challenges appear.
+ * Dynamic live fetcher for m.microtv.st with concurrent anti-blocking strategies (Promise.any).
+ * Resolves within 1 second on both local machines and cloud hosting environments (Render / Vercel).
  */
 async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
   if (!targetUrl) return null;
@@ -952,109 +952,85 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
     }
   }
 
-  // Strategy 1: Googlebot verified crawler headers (bypasses Cloudflare bot challenges seamlessly on Render & Vercel)
-  try {
-    const activeMicro = await getActiveMicroTvBase();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(targetUrl, {
-      headers: {
-        ...MICROTV_CRAWLER_HEADERS,
-        'Referer': `${activeMicro}/`
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (res.ok) {
-      const text = await res.text();
-      if (!text.includes('Just a moment...') && !text.includes('Checking your browser') && text.length > 500) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
-        return text;
-      }
-    }
-  } catch (e) {
-    console.warn('MicroTV crawler fetch error, falling back to readers:', e.message);
-  }
+  const activeMicro = await getActiveMicroTvBase();
 
-  // Strategy 2: Direct standard fetch (Fast response for local requests)
-  try {
-    const activeMicro = await getActiveMicroTvBase();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch(targetUrl, {
-      headers: {
-        ...COMMON_HEADERS,
-        'Referer': `${activeMicro}/`
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (res.ok) {
+  const fetchers = [
+    // 1. Direct fetch with Googlebot crawler headers (Instant bypass on Cloudflare)
+    async () => {
+      const res = await fetch(targetUrl, {
+        headers: {
+          ...MICROTV_CRAWLER_HEADERS,
+          'Referer': `${activeMicro}/`
+        },
+        signal: AbortSignal.timeout(3500)
+      });
+      if (!res.ok) throw new Error(`Crawler status ${res.status}`);
       const text = await res.text();
-      if (!text.includes('Just a moment...') && !text.includes('Checking your browser') && text.length > 500) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
-        return text;
+      if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
+        throw new Error('Crawler challenged');
       }
-    }
-  } catch (e) { }
+      return text;
+    },
 
-  // Strategy 3: Jina AI cloud reader with timestamp cachebuster (Cleanly extracts full live HTML bypassing Cloudflare on Render)
-  try {
-    const separator = targetUrl.includes('?') ? '&' : '?';
-    const jinaTarget = `${targetUrl}${separator}_cb=${Date.now()}`;
-    const jinaUrl = `https://r.jina.ai/${jinaTarget}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const jRes = await fetch(jinaUrl, {
-      headers: {
-        'X-Return-Format': 'html',
-        'X-No-Cache': 'true'
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (jRes.ok) {
+    // 2. Direct browser fetch (Fastest for local / broadband IPs)
+    async () => {
+      const res = await fetch(targetUrl, {
+        headers: {
+          ...COMMON_HEADERS,
+          'Referer': `${activeMicro}/`
+        },
+        signal: AbortSignal.timeout(3500)
+      });
+      if (!res.ok) throw new Error(`Direct status ${res.status}`);
+      const text = await res.text();
+      if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
+        throw new Error('Direct challenged');
+      }
+      return text;
+    },
+
+    // 3. Jina AI reader with timestamp cachebuster (Universal bypass for cloud datacenter IPs)
+    async () => {
+      const separator = targetUrl.includes('?') ? '&' : '?';
+      const jinaTarget = `${targetUrl}${separator}_cb=${Date.now()}`;
+      const jinaUrl = `https://r.jina.ai/${jinaTarget}`;
+      const jRes = await fetch(jinaUrl, {
+        headers: {
+          'X-Return-Format': 'html',
+          'X-No-Cache': 'true'
+        },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!jRes.ok) throw new Error(`Jina status ${jRes.status}`);
       const html = await jRes.text();
-      if (html.length > 500 && !html.includes('Just a moment...') && (html.includes('post-card') || html.includes('embed-player') || html.includes('download.php') || html.includes('featured-poster'))) {
-        MICROTV_CACHE.set(targetUrl, { data: html, expiresAt: Date.now() + cacheTtl });
-        return html;
+      if (html.length < 500 || html.includes('Just a moment...')) {
+        throw new Error('Jina challenged or empty');
       }
+      return html;
+    },
+
+    // 4. allorigins proxy fallback
+    async () => {
+      const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
+      const pRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
+      if (!pRes.ok) throw new Error(`AllOrigins status ${pRes.status}`);
+      const text = await pRes.text();
+      if (text.length < 500 || text.includes('Just a moment...')) {
+        throw new Error('AllOrigins challenged or empty');
+      }
+      return text;
     }
-  } catch (e) {
-    console.warn('MicroTV Jina fetch warning:', e.message);
+  ];
+
+  try {
+    const html = await Promise.any(fetchers.map(fn => fn()));
+    if (html && html.length > 500) {
+      MICROTV_CACHE.set(targetUrl, { data: html, expiresAt: Date.now() + cacheTtl });
+      return html;
+    }
+  } catch (err) {
+    console.warn('[MicroTV Scraper] All concurrent strategies failed for:', targetUrl);
   }
-
-  // Strategy 4: allorigins fallback bridge
-  try {
-    const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const pRes = await fetch(proxyUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (pRes.ok) {
-      const text = await pRes.text();
-      if (text.length > 500 && !text.includes('Just a moment...')) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
-        return text;
-      }
-    }
-  } catch (e) { }
-
-  // Strategy 5: codetabs proxy bridge
-  try {
-    const proxyUrl = 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const pRes = await fetch(proxyUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (pRes.ok) {
-      const text = await pRes.text();
-      if (text.length > 500 && !text.includes('Just a moment...')) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
-        return text;
-      }
-    }
-  } catch (e) { }
 
   return null;
 }
