@@ -76,12 +76,18 @@ const VIEWS_FILE = path.join(DATA_DIR, 'views.json');
 
 // Dynamic real-time scraping with fallback seed & post cache for cloud resilience (Render / Vercel Cloudflare bypass)
 let MICROTV_SEED_CATALOG = [];
+let MICROTV_PAGES_CATALOG = {};
 let MICROTV_POSTS_CACHE = {};
 try {
   const seedPath = path.join(__dirname, 'data', 'microtv_seed.json');
   if (fs.existsSync(seedPath)) {
     MICROTV_SEED_CATALOG = JSON.parse(fs.readFileSync(seedPath, 'utf8') || '[]');
     console.log(`[MicroTV Seed] Loaded ${MICROTV_SEED_CATALOG.length} seed catalog items`);
+  }
+  const pagesPath = path.join(__dirname, 'data', 'microtv_pages.json');
+  if (fs.existsSync(pagesPath)) {
+    MICROTV_PAGES_CATALOG = JSON.parse(fs.readFileSync(pagesPath, 'utf8') || '{}');
+    console.log(`[MicroTV Pages] Loaded ${Object.keys(MICROTV_PAGES_CATALOG).length} pages of catalog items`);
   }
   const cachePath = path.join(__dirname, 'data', 'microtv_posts_cache.json');
   if (fs.existsSync(cachePath)) {
@@ -1043,7 +1049,7 @@ function parseMicroTvCards(html) {
   return cards;
 }
 
-let KNOWN_MICROTV_TOTAL_PAGES = 33;
+let KNOWN_MICROTV_TOTAL_PAGES = 35;
 
 function parsePagination(html, requestedPage) {
   const curPage = parseInt(requestedPage, 10) || 1;
@@ -1563,21 +1569,38 @@ app.get('/api/content', async (req, res) => {
       if (html) {
         allItems = parseMicroTvCards(html);
         pagination = parsePagination(html, page);
+        if (allItems.length > 0) {
+          MICROTV_PAGES_CATALOG[String(page)] = allItems;
+        }
       }
 
       // Cloud deployment fallback (Render / Vercel Cloudflare challenge resilience)
-      if (allItems.length === 0 && MICROTV_SEED_CATALOG.length > 0) {
-        const pageSize = 16;
-        const totalPages = Math.ceil(MICROTV_SEED_CATALOG.length / pageSize) || 1;
+      if (allItems.length === 0 && (MICROTV_PAGES_CATALOG[String(page)] || MICROTV_SEED_CATALOG.length > 0)) {
+        const pageKey = String(page);
+        if (MICROTV_PAGES_CATALOG[pageKey]) {
+          allItems = MICROTV_PAGES_CATALOG[pageKey];
+        } else {
+          const pageSize = 50;
+          const start = (page - 1) * pageSize;
+          allItems = MICROTV_SEED_CATALOG.slice(start, start + pageSize);
+        }
+
+        const totalPages = Math.max(35, Object.keys(MICROTV_PAGES_CATALOG).length, Math.ceil(MICROTV_SEED_CATALOG.length / 50));
         const curPage = Math.min(Math.max(1, page), totalPages);
-        const start = (curPage - 1) * pageSize;
-        allItems = MICROTV_SEED_CATALOG.slice(start, start + pageSize);
+
+        const pageNumbers = new Set();
+        pageNumbers.add(curPage);
+        for (let i = 1; i <= Math.min(totalPages, 5); i++) pageNumbers.add(i);
+        if (curPage > 1) pageNumbers.add(curPage - 1);
+        if (curPage < totalPages) pageNumbers.add(curPage + 1);
+        pageNumbers.add(totalPages);
+
         pagination = {
           currentPage: curPage,
           totalPages: totalPages,
           hasNext: curPage < totalPages,
           hasPrev: curPage > 1,
-          pages: Array.from({ length: totalPages }, (_, i) => i + 1)
+          pages: Array.from(pageNumbers).sort((a, b) => a - b)
         };
       }
     } else if (categoryFilter === 'movies' || categoryFilter === 'bollywood' || categoryFilter === 'hollywood' || categoryFilter === 'south' || categoryFilter === 'south_movies' || categoryFilter === 'korean' || categoryFilter === 'korean_movies' || categoryFilter === 'web_series' || categoryFilter === 'new_releases') {
@@ -2507,6 +2530,38 @@ app.get('/api/post', async (req, res) => {
             isCachedCloudFallback: true
           });
         }
+
+        // If not in pre-resolved cache, check if item exists in MICROTV_SEED_CATALOG
+        const seedItem = MICROTV_SEED_CATALOG.find(it => it.slug === cleanSlug || it.id === `microtv_${cleanSlug}`);
+        if (seedItem) {
+          const title = seedItem.title;
+          const poster = seedItem.thumbnail;
+          return res.json({
+            success: true,
+            slug: cleanSlug,
+            source: 'MicroTV',
+            category: 'Mini Drama',
+            title,
+            poster,
+            embedUrl: '',
+            downloadPhpUrl: '',
+            directStreamUrl: null,
+            isPlayable: true,
+            aspectRatio: 'vertical',
+            actualMediaFileName: `${title}.mkv`,
+            mediaFileSize: null,
+            qualities: [
+              { quality: '480p', size: '450MB', cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=480p&type=cloud_direct` },
+              { quality: '720p', size: '1.2GB', cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=720p&type=cloud_direct` },
+              { quality: '1080p', size: '2.9GB', cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=1080p&type=cloud_direct` }
+            ],
+            originalViews: seedItem.views || '2.8K views',
+            publishDate: 'Recent',
+            clientIp: getClientIp(req),
+            isCachedCloudFallback: true
+          });
+        }
+
         return res.status(404).json({ success: false, error: 'Series not found on MicroTV' });
       }
 
