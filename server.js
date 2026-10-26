@@ -1035,6 +1035,46 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
   return null;
 }
 
+app.get('/api/microtv-debug', async (req, res) => {
+  const targetUrl = req.query.url || 'https://m.microtv.st/post/love-sex-aur-professor-full-episode';
+  const results = {};
+
+  try {
+    const r1 = await fetch(targetUrl, { headers: MICROTV_CRAWLER_HEADERS, signal: AbortSignal.timeout(4000) });
+    const t1 = await r1.text();
+    results.crawler = { status: r1.status, len: t1.length, challenged: t1.includes('Just a moment...') };
+  } catch (e) { results.crawler = { error: e.message }; }
+
+  try {
+    const r2 = await fetch(targetUrl, { headers: COMMON_HEADERS, signal: AbortSignal.timeout(4000) });
+    const t2 = await r2.text();
+    results.direct = { status: r2.status, len: t2.length, challenged: t2.includes('Just a moment...') };
+  } catch (e) { results.direct = { error: e.message }; }
+
+  try {
+    const r3 = await fetch(`https://r.jina.ai/${targetUrl}?_cb=${Date.now()}`, {
+      headers: { 'X-Return-Format': 'html', 'X-No-Cache': 'true' },
+      signal: AbortSignal.timeout(8000)
+    });
+    const t3 = await r3.text();
+    results.jina = { status: r3.status, len: t3.length, hasIframe: t3.includes('<iframe') };
+  } catch (e) { results.jina = { error: e.message }; }
+
+  try {
+    const r4 = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), { signal: AbortSignal.timeout(6000) });
+    const t4 = await r4.text();
+    results.allorigins = { status: r4.status, len: t4.length };
+  } catch (e) { results.allorigins = { error: e.message }; }
+
+  try {
+    const r5 = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl), { signal: AbortSignal.timeout(6000) });
+    const t5 = await r5.text();
+    results.codetabs = { status: r5.status, len: t5.length };
+  } catch (e) { results.codetabs = { error: e.message }; }
+
+  return res.json(results);
+});
+
 function parseMicroTvCards(html) {
   const cards = [];
   const cardRegex = /<div\s+class=["']post-card["']>([\s\S]*?)<\/div>/gi;
