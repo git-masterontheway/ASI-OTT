@@ -927,11 +927,17 @@ function formatViewCount(rawViews) {
 // ---------------------------------------------------------------------------
 
 const MICROTV_CACHE = new Map();
+const MICROTV_CRAWLER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9'
+};
+
 const MICROTV_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes standard cache
 const MICROTV_PAGE1_CACHE_TTL_MS = 30 * 1000; // 30 seconds for page 1 so newly uploaded dramas appear immediately!
 
 /**
- * Dynamic live fetcher for m.microtv.st with anti-blocking Jina AI reader and multi-proxy failover.
+ * Dynamic live fetcher for m.microtv.st with anti-blocking crawler headers and multi-proxy failover.
  * Ensures Mini Drama works seamlessly even on cloud hosting IPs (e.g. Render/Vercel) where Cloudflare challenges appear.
  */
 async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
@@ -946,7 +952,31 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
     }
   }
 
-  // Strategy 1: Direct fetch (Super fast 200ms response for local & non-challenged requests)
+  // Strategy 1: Googlebot verified crawler headers (bypasses Cloudflare bot challenges seamlessly on Render & Vercel)
+  try {
+    const activeMicro = await getActiveMicroTvBase();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(targetUrl, {
+      headers: {
+        ...MICROTV_CRAWLER_HEADERS,
+        'Referer': `${activeMicro}/`
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const text = await res.text();
+      if (!text.includes('Just a moment...') && !text.includes('Checking your browser') && text.length > 500) {
+        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
+        return text;
+      }
+    }
+  } catch (e) {
+    console.warn('MicroTV crawler fetch error, falling back to readers:', e.message);
+  }
+
+  // Strategy 2: Direct standard fetch (Fast response for local requests)
   try {
     const activeMicro = await getActiveMicroTvBase();
     const controller = new AbortController();
@@ -966,17 +996,15 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
         return text;
       }
     }
-  } catch (e) {
-    console.warn('MicroTV direct fetch error, falling back to readers:', e.message);
-  }
+  } catch (e) { }
 
-  // Strategy 2: Jina AI cloud reader with timestamp cachebuster (Cleanly extracts full live HTML bypassing Cloudflare on Render)
+  // Strategy 3: Jina AI cloud reader with timestamp cachebuster (Cleanly extracts full live HTML bypassing Cloudflare on Render)
   try {
     const separator = targetUrl.includes('?') ? '&' : '?';
     const jinaTarget = `${targetUrl}${separator}_cb=${Date.now()}`;
     const jinaUrl = `https://r.jina.ai/${jinaTarget}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout for reliable completion
+    const timeout = setTimeout(() => controller.abort(), 10000);
     const jRes = await fetch(jinaUrl, {
       headers: {
         'X-Return-Format': 'html',
@@ -996,9 +1024,25 @@ async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
     console.warn('MicroTV Jina fetch warning:', e.message);
   }
 
-  // Strategy 3: allorigins fallback bridge
+  // Strategy 4: allorigins fallback bridge
   try {
     const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const pRes = await fetch(proxyUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (pRes.ok) {
+      const text = await pRes.text();
+      if (text.length > 500 && !text.includes('Just a moment...')) {
+        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
+        return text;
+      }
+    }
+  } catch (e) { }
+
+  // Strategy 5: codetabs proxy bridge
+  try {
+    const proxyUrl = 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     const pRes = await fetch(proxyUrl, { signal: controller.signal });
