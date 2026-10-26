@@ -1039,12 +1039,24 @@ app.get('/api/microtv-debug', async (req, res) => {
   const targetUrl = req.query.url || 'https://m.microtv.st/post/love-sex-aur-professor-full-episode';
   const results = {};
 
-  // 1. Jina basic without custom headers
+  // 1. markdown.new GET
   try {
-    const r = await fetch(`https://r.jina.ai/${targetUrl}`, { signal: AbortSignal.timeout(6000) });
+    const r = await fetch('https://markdown.new/' + targetUrl, { signal: AbortSignal.timeout(6000) });
     const t = await r.text();
-    results.jinaBasic = { status: r.status, len: t.length, snippet: t.slice(0, 150) };
-  } catch (e) { results.jinaBasic = { error: e.message }; }
+    results.markdownNew = { status: r.status, len: t.length, snippet: t.slice(0, 200) };
+  } catch (e) { results.markdownNew = { error: e.message }; }
+
+  // 2. markdown.new POST with browser
+  try {
+    const r = await fetch('https://markdown.new/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: targetUrl, method: 'browser' }),
+      signal: AbortSignal.timeout(8000)
+    });
+    const t = await r.text();
+    results.markdownNewBrowser = { status: r.status, len: t.length, snippet: t.slice(0, 200) };
+  } catch (e) { results.markdownNewBrowser = { error: e.message }; }
 
   // 2. Allorigins JSON
   try {
