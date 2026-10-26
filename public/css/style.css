@@ -855,14 +855,39 @@ a {
   );
   padding: 1rem;
   opacity: 0;
-  transition: opacity 0.3s ease;
+  visibility: hidden;
+  transition: opacity 0.35s ease, visibility 0.35s ease;
   pointer-events: none;
   z-index: 10;
 }
 
-.player-stage:hover .player-controls-overlay,
-.player-controls-overlay.active {
-  opacity: 1;
+/* Show navigation on click (active class) or when paused */
+.player-controls-overlay.active,
+.player-stage.controls-visible .player-controls-overlay,
+.player-stage.is-paused .player-controls-overlay {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
+
+/* Auto-hide navigation and cursor under 5 seconds during playback */
+.player-stage.controls-hidden {
+  cursor: none !important;
+}
+
+.player-stage.controls-hidden .player-controls-overlay {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.player-stage.controls-hidden .center-play-trigger {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.player-stage.controls-hidden .player-tap-zone {
   pointer-events: auto;
 }
 

@@ -937,6 +937,86 @@ function startVideoPlayback() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Auto-hide Navigation Controls Engine (5-Second Auto-Hide, Click-to-Show)
+// ---------------------------------------------------------------------------
+const CONTROLS_HIDE_TIMEOUT_MS = 5000;
+let controlsHideTimeout = null;
+let areControlsVisible = true;
+
+function isAnyPopoverOpen() {
+  return (
+    (playerSettingsPopover && playerSettingsPopover.classList.contains('open')) ||
+    (playerAudioPopover && playerAudioPopover.classList.contains('open')) ||
+    (playerSubtitlesPopover && playerSubtitlesPopover.classList.contains('open')) ||
+    (playerSpeedPopover && playerSpeedPopover.classList.contains('open'))
+  );
+}
+
+function showPlayerControls(autoHide = true) {
+  areControlsVisible = true;
+  if (playerOverlay) playerOverlay.classList.add('active');
+  if (playerStage) {
+    playerStage.classList.add('controls-visible');
+    playerStage.classList.remove('controls-hidden');
+  }
+
+  clearTimeout(controlsHideTimeout);
+
+  // If video is playing, initiate auto-hide under 5 seconds
+  if (autoHide && customVideo && !customVideo.paused && !customVideo.ended && !isAnyPopoverOpen() && !isDraggingSeekbar) {
+    controlsHideTimeout = setTimeout(() => {
+      hidePlayerControls();
+    }, CONTROLS_HIDE_TIMEOUT_MS);
+  }
+}
+
+function hidePlayerControls(force = false) {
+  // If video is paused, keep controls visible
+  if (!force && customVideo && (customVideo.paused || customVideo.ended)) {
+    return;
+  }
+  // If a popover is open or seekbar dragging, do not hide
+  if (!force && (isAnyPopoverOpen() || isDraggingSeekbar)) {
+    return;
+  }
+
+  areControlsVisible = false;
+  clearTimeout(controlsHideTimeout);
+  if (playerOverlay) playerOverlay.classList.remove('active');
+  if (playerStage) {
+    playerStage.classList.remove('controls-visible');
+    playerStage.classList.add('controls-hidden');
+  }
+}
+
+function resetControlsTimeout() {
+  showPlayerControls(true);
+}
+
+function handlePlayerStageClick() {
+  if (activePlayerType !== 'custom') return;
+
+  // USER REQUIREMENT: "make sure player navigation auto hide after play video show only only click and hide under 5 second."
+  // If video is playing and controls are currently hidden:
+  // Clicking the player REVEALS the controls and starts the 5-second countdown timer (video continues playing uninterrupted)
+  if (!customVideo.paused && !customVideo.ended && !areControlsVisible) {
+    showPlayerControls(true);
+    return;
+  }
+
+  // If controls are already visible and video is playing, clicking empty area pauses playback
+  if (!customVideo.paused && !customVideo.ended && areControlsVisible) {
+    togglePlay();
+    return;
+  }
+
+  // If video is paused, clicking empty area resumes playback and starts the 5-second auto-hide
+  if (customVideo.paused || customVideo.ended) {
+    togglePlay();
+  }
+}
+
 function togglePlay() {
   if (activePlayerType !== 'custom') return;
 
@@ -947,6 +1027,7 @@ function togglePlay() {
     ctrlPlayIcon.className = 'fa-solid fa-play';
     centerPlayBtn.style.opacity = '1';
     centerPlayBtn.style.pointerEvents = 'auto';
+    showPlayerControls(false);
   }
 }
 
@@ -972,6 +1053,7 @@ if (tapZoneLeft) {
     e.stopPropagation();
     triggerTapZoneEffect(tapZoneLeft);
     triggerQuickSkip(-10);
+    resetControlsTimeout();
   });
 }
 
@@ -980,6 +1062,7 @@ if (tapZoneRight) {
     e.stopPropagation();
     triggerTapZoneEffect(tapZoneRight);
     triggerQuickSkip(10);
+    resetControlsTimeout();
   });
 }
 
@@ -990,22 +1073,34 @@ ctrlPlayBtn.addEventListener('click', (e) => {
 
 customVideo.addEventListener('click', (e) => {
   e.stopPropagation();
-  togglePlay();
+  handlePlayerStageClick();
 });
 
-// Click outside controls toggles play
+// Click outside control buttons reveals controls or toggles play
 playerOverlay.addEventListener('click', (e) => {
   if (
     e.target.closest('.player-bottom-controls') ||
     e.target.closest('.player-top-controls') ||
     e.target.closest('.player-settings-popover') ||
-    e.target.closest('.player-tap-zone') ||
-    e.target.closest('.center-play-trigger')
+    e.target.closest('.player-audio-popover') ||
+    e.target.closest('.player-subtitles-popover') ||
+    e.target.closest('.player-speed-popover')
   ) {
+    resetControlsTimeout();
     return;
   }
+
+  if (e.target.closest('.player-tap-zone')) {
+    resetControlsTimeout();
+    return;
+  }
+
+  if (e.target.closest('.center-play-trigger')) {
+    return;
+  }
+
   e.stopPropagation();
-  togglePlay();
+  handlePlayerStageClick();
 });
 
 // Video Loading & Buffering Animation Lifecycle
@@ -1027,6 +1122,7 @@ customVideo.addEventListener('canplay', () => {
 
 customVideo.addEventListener('playing', () => {
   hidePlayerVideoLoading();
+  showPlayerControls(true);
 });
 
 customVideo.addEventListener('loadeddata', () => {
@@ -1078,6 +1174,7 @@ customVideo.addEventListener('play', () => {
   if (playerStage) playerStage.classList.remove('is-paused');
   centerPlayBtn.style.opacity = '0';
   centerPlayBtn.style.pointerEvents = 'none';
+  showPlayerControls(true); // Auto-hide navigation under 5 seconds during playback
 });
 
 customVideo.addEventListener('pause', () => {
@@ -1086,6 +1183,7 @@ customVideo.addEventListener('pause', () => {
   if (playerStage) playerStage.classList.add('is-paused');
   centerPlayBtn.style.opacity = '1';
   centerPlayBtn.style.pointerEvents = 'auto';
+  showPlayerControls(false); // Keep navigation visible while paused
 });
 
 customVideo.addEventListener('timeupdate', () => {
@@ -1179,6 +1277,7 @@ window.addEventListener('mouseup', (e) => {
     if (seekTooltip) {
       seekTooltip.style.opacity = '0';
     }
+    resetControlsTimeout();
   }
 });
 
@@ -1190,6 +1289,7 @@ progressContainer.addEventListener('touchstart', (e) => {
   if (customVideo.duration && targetTime !== undefined) {
     customVideo.currentTime = targetTime;
   }
+  resetControlsTimeout();
 }, { passive: true });
 
 window.addEventListener('touchmove', (e) => {
@@ -1207,6 +1307,7 @@ window.addEventListener('touchend', (e) => {
     if (seekTooltip) {
       seekTooltip.style.opacity = '0';
     }
+    resetControlsTimeout();
   }
 });
 
@@ -1225,6 +1326,7 @@ function triggerQuickSkip(delta) {
       quickSkipBadge.classList.remove('active');
     }, 600);
   }
+  resetControlsTimeout();
 }
 
 ctrlRewindBtn.addEventListener('click', (e) => {
@@ -1252,6 +1354,8 @@ window.addEventListener('keydown', (e) => {
   ) {
     return;
   }
+
+  resetControlsTimeout();
 
   // Play / Pause (Space or 'k'/'K')
   if (e.code === 'Space' || e.key === ' ' || e.code === 'KeyK') {
