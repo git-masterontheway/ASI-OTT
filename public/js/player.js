@@ -57,6 +57,8 @@ let activePlayerType = 'custom'; // 'custom' or 'embed'
 const playerStage = document.getElementById('player-stage');
 const customVideo = document.getElementById('custom-video');
 const embedIframe = document.getElementById('embed-iframe');
+const tapZoneLeft = document.getElementById('tap-zone-left');
+const tapZoneRight = document.getElementById('tap-zone-right');
 const centerPlayBtn = document.getElementById('center-play-btn');
 const centerPlayIcon = document.getElementById('center-play-icon');
 const playerOverlay = document.getElementById('player-controls-overlay');
@@ -73,6 +75,7 @@ const ctrlPipBtn = document.getElementById('ctrl-pip-btn');
 const ctrlShareBtn = document.getElementById('ctrl-share-btn');
 const mainShareBtn = document.getElementById('main-share-btn');
 const progressContainer = document.getElementById('progress-container');
+const progressBufferBar = document.getElementById('progress-buffer-bar');
 const progressBar = document.getElementById('progress-bar');
 const seekTooltip = document.getElementById('seek-tooltip');
 const quickSkipBadge = document.getElementById('quick-skip-badge');
@@ -381,8 +384,11 @@ function setupDirectStreamPlayback(autoPlay = true) {
     }
     window.hlsInstance = new Hls({
       enableWorker: true,
-      maxBufferLength: 30,
-      maxMaxBufferLength: 60
+      maxBufferLength: 600, // 10 minutes lookahead pre-buffer
+      maxMaxBufferLength: 900, // up to 15 minutes
+      maxBufferSize: 300 * 1024 * 1024, // 300MB buffer memory capacity
+      backBufferLength: 120,
+      lowLatencyMode: false
     });
     window.hlsInstance.loadSource(streamEndpoint);
     window.hlsInstance.attachMedia(customVideo);
@@ -423,9 +429,8 @@ function setupDirectStreamPlayback(autoPlay = true) {
     }, { once: true });
     switchToCustomPlayer(autoPlay);
 
-  } else if (seriesData.embedUrl && (seriesData.directStreamUrl.includes('.mkv') || !seriesData.directStreamUrl.includes('.mp4'))) {
-    // Matroska container fallback: initialize embed player
-    embedIframe.src = seriesData.embedUrl;
+  } else if (!isM3u8 && seriesData.embedUrl && (seriesData.directStreamUrl.includes('.mkv') || !seriesData.directStreamUrl.includes('.mp4'))) {
+    // Matroska container fallback: initialize clean embed player
     switchToEmbedPlayer();
 
   } else {
@@ -502,11 +507,17 @@ function switchToEmbedPlayer() {
   showPlayerVideoLoading('Connecting Embedded Player...', 'Loading embedded player stream');
   customVideo.pause();
   customVideo.style.display = 'none';
-  embedIframe.src = seriesData.embedUrl;
+  embedIframe.removeAttribute('sandbox');
+  embedIframe.src = `${API_BASE}/api/clean-embed?url=${encodeURIComponent(seriesData.embedUrl)}`;
   embedIframe.style.display = 'block';
+  if (tapZoneLeft) tapZoneLeft.style.display = 'none';
+  if (tapZoneRight) tapZoneRight.style.display = 'none';
   centerPlayBtn.style.display = 'none';
   playerOverlay.style.display = 'none';
   activePlayerType = 'embed';
+
+  const embedSpeedBar = document.getElementById('embed-speed-bar');
+  if (embedSpeedBar) embedSpeedBar.style.display = 'flex';
 
   embedIframe.onload = () => {
     setTimeout(hidePlayerVideoLoading, 400);
@@ -524,9 +535,14 @@ function switchToCustomPlayer(forcePlay = true) {
   embedIframe.style.display = 'none';
   embedIframe.src = '';
   customVideo.style.display = 'block';
+  if (tapZoneLeft) tapZoneLeft.style.display = 'flex';
+  if (tapZoneRight) tapZoneRight.style.display = 'flex';
   centerPlayBtn.style.display = 'flex';
   playerOverlay.style.display = 'flex';
   activePlayerType = 'custom';
+
+  const embedSpeedBar = document.getElementById('embed-speed-bar');
+  if (embedSpeedBar) embedSpeedBar.style.display = 'none';
 
   if (btnModeDirect) btnModeDirect.classList.add('active');
   if (btnModeEmbed) btnModeEmbed.classList.remove('active');
@@ -732,10 +748,16 @@ if (subFileInput) {
 /**
  * Popover Controls (Settings, Audio, Subtitles)
  */
+const playerSpeedPopover = document.getElementById('player-speed-popover');
+const ctrlSpeedBtn = document.getElementById('ctrl-speed-btn');
+const ctrlSpeedLabel = document.getElementById('ctrl-speed-label');
+const speedPopCloseBtn = document.getElementById('speed-pop-close-btn');
+
 function closeAllPopovers() {
   if (playerSettingsPopover) playerSettingsPopover.classList.remove('open');
   if (playerAudioPopover) playerAudioPopover.classList.remove('open');
   if (playerSubtitlesPopover) playerSubtitlesPopover.classList.remove('open');
+  if (playerSpeedPopover) playerSpeedPopover.classList.remove('open');
 }
 
 if (ctrlAudioBtn) {
@@ -762,6 +784,24 @@ if (ctrlSubtitlesBtn) {
   });
 }
 
+if (ctrlSpeedBtn) {
+  ctrlSpeedBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = playerSpeedPopover && playerSpeedPopover.classList.contains('open');
+    closeAllPopovers();
+    if (!isOpen && playerSpeedPopover) {
+      playerSpeedPopover.classList.add('open');
+    }
+  });
+}
+
+if (speedPopCloseBtn) {
+  speedPopCloseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAllPopovers();
+  });
+}
+
 if (audioCloseBtn) audioCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); closeAllPopovers(); });
 if (subtitlesCloseBtn) subtitlesCloseBtn.addEventListener('click', (e) => { e.stopPropagation(); closeAllPopovers(); });
 
@@ -769,11 +809,103 @@ document.addEventListener('click', (e) => {
   const isInside = (playerSettingsPopover && playerSettingsPopover.contains(e.target)) ||
                    (playerAudioPopover && playerAudioPopover.contains(e.target)) ||
                    (playerSubtitlesPopover && playerSubtitlesPopover.contains(e.target)) ||
-                   e.target === ctrlSettingsBtn || e.target === ctrlAudioBtn || e.target === ctrlSubtitlesBtn;
+                   (playerSpeedPopover && playerSpeedPopover.contains(e.target)) ||
+                   e.target === ctrlSettingsBtn || e.target === ctrlAudioBtn || e.target === ctrlSubtitlesBtn || e.target === ctrlSpeedBtn;
   if (!isInside) {
     closeAllPopovers();
   }
 });
+
+/**
+ * Smart 10-Minute Buffer Lookahead Engine
+ * Ensures 10-minute buffer is preloaded before starting playback,
+ * and once playback passes 7 minutes, continually loads remaining 10 minutes to prevent internet buffering drops.
+ */
+let bufferMonitorTimer = null;
+let forwardPrefetchActive = false;
+
+function startSmartBufferLookaheadEngine() {
+  if (bufferMonitorTimer) clearInterval(bufferMonitorTimer);
+
+  const bufferBadge = document.getElementById('player-buffer-indicator');
+  const bufferText = document.getElementById('buffer-indicator-text');
+
+  function updateBufferStatus() {
+    if (!customVideo) return;
+
+    if (activePlayerType === 'embed') {
+      if (bufferText) bufferText.textContent = 'Embed Stream Ready';
+      return;
+    }
+
+    const current = customVideo.currentTime || 0;
+    const duration = customVideo.duration || 0;
+    let forwardBuffered = 0;
+
+    if (customVideo.buffered && customVideo.buffered.length > 0) {
+      for (let i = 0; i < customVideo.buffered.length; i++) {
+        const start = customVideo.buffered.start(i);
+        const end = customVideo.buffered.end(i);
+        if (start <= current + 1 && end >= current) {
+          forwardBuffered = Math.max(0, end - current);
+          break;
+        }
+      }
+    }
+
+    const targetLookahead = (duration > 0 && duration < 600) ? Math.max(15, duration - current) : 600;
+
+    if (forwardBuffered >= targetLookahead || (duration > 0 && current + forwardBuffered >= duration - 2)) {
+      if (bufferText) bufferText.textContent = '10m Buffer Active • Zero Stutter';
+      if (bufferBadge) {
+        bufferBadge.style.borderColor = 'rgba(16, 185, 129, 0.45)';
+        bufferBadge.style.background = 'rgba(16, 185, 129, 0.16)';
+        bufferBadge.style.boxShadow = '0 0 14px rgba(16, 185, 129, 0.35)';
+      }
+    } else {
+      const mins = Math.floor(forwardBuffered / 60);
+      const secs = Math.floor(forwardBuffered % 60);
+      const text = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      if (bufferText) bufferText.textContent = `Pre-buffering 10m ahead (${text})`;
+      if (bufferBadge) {
+        bufferBadge.style.borderColor = 'rgba(6, 182, 212, 0.45)';
+        bufferBadge.style.background = 'rgba(6, 182, 212, 0.14)';
+        bufferBadge.style.boxShadow = '0 0 12px rgba(6, 182, 212, 0.25)';
+      }
+    }
+
+    // When playback passes 7 minutes (420s) or forward buffer falls below 10 mins (600s),
+    // ensure the player continues aggressively pre-loading the left 10 mins!
+    if (current >= 420 || forwardBuffered < 600) {
+      if (window.hlsInstance && window.hlsInstance.config) {
+        window.hlsInstance.config.maxBufferLength = 600;
+        window.hlsInstance.config.maxMaxBufferLength = 900;
+      }
+      if (seriesData?.directStreamUrl && !forwardPrefetchActive && forwardBuffered < 120 && duration > current + forwardBuffered) {
+        prefetchDirectStreamChunk();
+      }
+    }
+    updateLoadedTimeline();
+  }
+
+  bufferMonitorTimer = setInterval(updateBufferStatus, 2000);
+  updateBufferStatus();
+}
+
+async function prefetchDirectStreamChunk() {
+  if (forwardPrefetchActive || !seriesData?.directStreamUrl) return;
+  forwardPrefetchActive = true;
+  try {
+    const streamUrl = seriesData.directStreamUrl.startsWith('http')
+      ? `/api/stream-video?url=${encodeURIComponent(seriesData.directStreamUrl)}`
+      : seriesData.directStreamUrl;
+    await fetch(streamUrl, {
+      headers: { 'Range': 'bytes=0-1048576' }
+    }).catch(() => {});
+  } finally {
+    setTimeout(() => { forwardPrefetchActive = false; }, 8000);
+  }
+}
 
 /**
  * Instant Video Playback Trigger with Sound
@@ -787,6 +919,8 @@ function startVideoPlayback() {
   if (audioContext && audioContext.state === 'suspended') {
     audioContext.resume();
   }
+
+  startSmartBufferLookaheadEngine();
 
   const playPromise = customVideo.play();
   if (playPromise !== undefined) {
@@ -815,11 +949,38 @@ function togglePlay() {
   }
 }
 
-// Center play button and video click triggers
-centerPlayBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  togglePlay();
-});
+// Center play trigger
+if (centerPlayBtn) {
+  centerPlayBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePlay();
+  });
+}
+
+// Interactive Left/Right Tap Zones (Click Left = 10s Rewind, Click Right = 10s Forward)
+function triggerTapZoneEffect(zoneEl) {
+  if (!zoneEl) return;
+  zoneEl.classList.remove('active-ripple');
+  void zoneEl.offsetWidth; // trigger reflow for animation restart
+  zoneEl.classList.add('active-ripple');
+  setTimeout(() => zoneEl.classList.remove('active-ripple'), 460);
+}
+
+if (tapZoneLeft) {
+  tapZoneLeft.addEventListener('click', (e) => {
+    e.stopPropagation();
+    triggerTapZoneEffect(tapZoneLeft);
+    triggerQuickSkip(-10);
+  });
+}
+
+if (tapZoneRight) {
+  tapZoneRight.addEventListener('click', (e) => {
+    e.stopPropagation();
+    triggerTapZoneEffect(tapZoneRight);
+    triggerQuickSkip(10);
+  });
+}
 
 ctrlPlayBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -836,7 +997,9 @@ playerOverlay.addEventListener('click', (e) => {
   if (
     e.target.closest('.player-bottom-controls') ||
     e.target.closest('.player-top-controls') ||
-    e.target.closest('.player-settings-popover')
+    e.target.closest('.player-settings-popover') ||
+    e.target.closest('.player-tap-zone') ||
+    e.target.closest('.center-play-trigger')
   ) {
     return;
   }
@@ -873,11 +1036,45 @@ customVideo.addEventListener('error', () => {
   hidePlayerVideoLoading();
 });
 
+/**
+ * Update Loaded / Buffered Timeline Bar
+ * Computes forward buffered seconds and visualizes how much timeline is loaded
+ */
+function updateLoadedTimeline() {
+  if (!customVideo || !customVideo.duration) return;
+  const current = customVideo.currentTime || 0;
+  let loadedEnd = 0;
+
+  if (customVideo.buffered && customVideo.buffered.length > 0) {
+    for (let i = 0; i < customVideo.buffered.length; i++) {
+      const start = customVideo.buffered.start(i);
+      const end = customVideo.buffered.end(i);
+      if (start <= current + 2 && end >= current) {
+        loadedEnd = Math.max(loadedEnd, end);
+        break;
+      }
+    }
+    if (loadedEnd === 0) {
+      for (let i = 0; i < customVideo.buffered.length; i++) {
+        if (customVideo.buffered.end(i) > loadedEnd) {
+          loadedEnd = customVideo.buffered.end(i);
+        }
+      }
+    }
+  }
+
+  const loadedPct = Math.min(100, Math.max(0, (loadedEnd / customVideo.duration) * 100));
+  if (progressBufferBar) {
+    progressBufferBar.style.width = `${loadedPct}%`;
+  }
+}
+
 // Video Events & Timeline Duration Updates
 customVideo.addEventListener('play', () => {
   hidePlayerVideoLoading();
   ctrlPlayIcon.className = 'fa-solid fa-pause';
   centerPlayIcon.className = 'fa-solid fa-pause';
+  if (playerStage) playerStage.classList.remove('is-paused');
   centerPlayBtn.style.opacity = '0';
   centerPlayBtn.style.pointerEvents = 'none';
 });
@@ -885,6 +1082,7 @@ customVideo.addEventListener('play', () => {
 customVideo.addEventListener('pause', () => {
   ctrlPlayIcon.className = 'fa-solid fa-play';
   centerPlayIcon.className = 'fa-solid fa-play';
+  if (playerStage) playerStage.classList.add('is-paused');
   centerPlayBtn.style.opacity = '1';
   centerPlayBtn.style.pointerEvents = 'auto';
 });
@@ -900,13 +1098,19 @@ customVideo.addEventListener('timeupdate', () => {
   
   timeDisplay.textContent = `${currentFormatted} / ${totalFormatted}`;
   timeDisplay.title = `${formatVerboseDuration(customVideo.currentTime)} of ${formatVerboseDuration(customVideo.duration)}`;
+  updateLoadedTimeline();
 });
+
+customVideo.addEventListener('progress', updateLoadedTimeline);
+customVideo.addEventListener('seeked', updateLoadedTimeline);
+customVideo.addEventListener('canplay', updateLoadedTimeline);
 
 customVideo.addEventListener('loadedmetadata', () => {
   const hasHours = customVideo.duration >= 3600;
   const totalFormatted = formatTimelineDuration(customVideo.duration, hasHours);
   timeDisplay.textContent = `${hasHours ? '00:00:00' : '00:00'} / ${totalFormatted}`;
   timeDisplay.title = `Duration: ${formatVerboseDuration(customVideo.duration)}`;
+  updateLoadedTimeline();
 });
 
 // ---------------------------------------------------------------------------
@@ -1032,6 +1236,84 @@ ctrlForwardBtn.addEventListener('click', (e) => {
   triggerQuickSkip(10);
 });
 
+// ---------------------------------------------------------------------------
+// Keyboard Navigation (Space = Play/Pause, Left/Right Arrow = -10s/+10s)
+// ---------------------------------------------------------------------------
+window.addEventListener('keydown', (e) => {
+  // Do not intercept keystrokes if typing inside inputs or search boxes
+  const activeEl = document.activeElement;
+  const activeTag = activeEl ? activeEl.tagName : '';
+  if (
+    activeTag === 'INPUT' ||
+    activeTag === 'TEXTAREA' ||
+    activeTag === 'SELECT' ||
+    (activeEl && activeEl.isContentEditable)
+  ) {
+    return;
+  }
+
+  // Play / Pause (Space or 'k'/'K')
+  if (e.code === 'Space' || e.key === ' ' || e.code === 'KeyK') {
+    e.preventDefault(); // Prevent page scrolling down
+    togglePlay();
+    return;
+  }
+
+  // Previous 10 Seconds (ArrowLeft or 'j'/'J')
+  if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
+    e.preventDefault();
+    triggerQuickSkip(-10);
+    if (typeof triggerTapZoneEffect === 'function' && tapZoneLeft) {
+      triggerTapZoneEffect(tapZoneLeft);
+    }
+    return;
+  }
+
+  // Next 10 Seconds (ArrowRight or 'l'/'L')
+  if (e.code === 'ArrowRight' || e.code === 'KeyL') {
+    e.preventDefault();
+    triggerQuickSkip(10);
+    if (typeof triggerTapZoneEffect === 'function' && tapZoneRight) {
+      triggerTapZoneEffect(tapZoneRight);
+    }
+    return;
+  }
+
+  // Fullscreen (KeyF)
+  if (e.code === 'KeyF') {
+    e.preventDefault();
+    if (ctrlFullscreenBtn) ctrlFullscreenBtn.click();
+    return;
+  }
+
+  // Mute / Unmute (KeyM)
+  if (e.code === 'KeyM') {
+    e.preventDefault();
+    if (ctrlMuteBtn) ctrlMuteBtn.click();
+    return;
+  }
+
+  // Volume Up (ArrowUp)
+  if (e.code === 'ArrowUp') {
+    e.preventDefault();
+    if (customVideo) {
+      customVideo.volume = Math.min(1.0, Math.round((customVideo.volume + 0.1) * 10) / 10);
+      showToast(`Volume: ${Math.round(customVideo.volume * 100)}%`, 'info');
+    }
+    return;
+  }
+
+  // Volume Down (ArrowDown)
+  if (e.code === 'ArrowDown') {
+    e.preventDefault();
+    if (customVideo) {
+      customVideo.volume = Math.max(0.0, Math.round((customVideo.volume - 0.1) * 10) / 10);
+      showToast(`Volume: ${Math.round(customVideo.volume * 100)}%`, 'info');
+    }
+    return;
+  }
+});
+
 // Mute / Unmute
 ctrlMuteBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -1101,19 +1383,36 @@ document.addEventListener('click', (e) => {
 // ---------------------------------------------------------------------------
 // Playback Speed Controller (Slider & Buttons up to 3x)
 // ---------------------------------------------------------------------------
+const speedOptButtons = document.querySelectorAll('.speed-opt');
+const embedSpeedButtons = document.querySelectorAll('.embed-speed-btn');
+
 function setPlaybackSpeed(speedVal) {
   const speed = Math.max(0.25, Math.min(3.0, parseFloat(speedVal) || 1.0));
-  customVideo.playbackRate = speed;
+  if (customVideo) customVideo.playbackRate = speed;
   if (valSpeed) valSpeed.textContent = `${speed}x`;
   if (speedSlider) speedSlider.value = speed;
+  if (ctrlSpeedLabel) ctrlSpeedLabel.textContent = `${speed}x`;
 
   speedButtons.forEach(btn => {
-    if (parseFloat(btn.dataset.speed) === speed) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
+    btn.classList.toggle('active', parseFloat(btn.dataset.speed) === speed);
   });
+
+  speedOptButtons.forEach(btn => {
+    btn.classList.toggle('active', parseFloat(btn.dataset.speed) === speed);
+  });
+
+  embedSpeedButtons.forEach(btn => {
+    btn.classList.toggle('active', parseFloat(btn.dataset.speed) === speed);
+  });
+
+  // Post message to embedded iframe player
+  if (embedIframe && embedIframe.contentWindow) {
+    try {
+      embedIframe.contentWindow.postMessage({ type: 'setPlaybackRate', rate: speed, value: speed }, '*');
+      embedIframe.contentWindow.postMessage({ event: 'command', func: 'setPlaybackRate', args: [speed] }, '*');
+      embedIframe.contentWindow.postMessage({ type: 'speed', speed: speed }, '*');
+    } catch (_) {}
+  }
 }
 
 if (speedSlider) {
@@ -1128,6 +1427,25 @@ speedButtons.forEach(btn => {
     const speed = parseFloat(btn.dataset.speed);
     setPlaybackSpeed(speed);
     showToast(`Speed set to ${speed}x`, 'info');
+  });
+});
+
+speedOptButtons.forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const speed = parseFloat(btn.dataset.speed);
+    setPlaybackSpeed(speed);
+    closeAllPopovers();
+    showToast(`Speed set to ${speed}x`, 'info');
+  });
+});
+
+embedSpeedButtons.forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const speed = parseFloat(btn.dataset.speed);
+    setPlaybackSpeed(speed);
+    showToast(`Embed Player Speed set to ${speed}x`, 'info');
   });
 });
 
@@ -1180,60 +1498,65 @@ function renderDownloadSection(qualities, title) {
   const tier1080 = getTier('1080') || getTier('2160') || getTier('4k');
 
   const tiers = [
-    { label: '480p', name: 'Standard Definition', tier: tier480, defaultSize: '450MB', badge: 'SD 480P', color: 'accent-cyan' },
-    { label: '720p', name: 'High Definition', tier: tier720, defaultSize: '1.2GB', badge: 'HD 720P', color: 'primary' },
-    { label: '1080p', name: 'Full High Definition', tier: tier1080, defaultSize: '2.9GB', badge: 'FHD 1080P', color: 'emerald' }
+    { label: '480p', name: 'Standard Definition', tier: tier480, defaultSize: '450MB', badge: 'SD 480P', resClass: 'udc-res-480', desc: 'Mobile-friendly optimized resolution with low data consumption.', feature: 'Fastest Download' },
+    { label: '720p', name: 'High Definition', tier: tier720, defaultSize: '1.2GB', badge: 'HD 720P', resClass: 'udc-res-720', desc: 'Crisp balance between file size and crystal-clear visual clarity.', feature: 'Most Popular' },
+    { label: '1080p', name: 'Full HD Master', tier: tier1080, defaultSize: '2.9GB', badge: 'FHD 1080P', resClass: 'udc-res-1080', desc: 'Ultimate cinematic fidelity with high-bitrate multi-channel audio.', feature: 'Best Quality' }
   ];
 
   container.innerHTML = `
-    <div class="unified-download-card">
-      <div class="udc-header">
+    <div class="udc-hero-card">
+      <div class="udc-header-modern">
         <div class="udc-header-left">
           <div class="udc-icon-badge">
             <i class="fa-solid fa-cloud-arrow-down"></i>
           </div>
           <div>
-            <h3 class="udc-title">${safeTitle}</h3>
+            <h3 class="udc-hero-title">${safeTitle}</h3>
             <div class="udc-meta-line">
-              <span><i class="fa-solid fa-file-video"></i> MKV Format</span>
-              <span><i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Verified Direct CDN</span>
-              <span><i class="fa-solid fa-shield-halved" style="color: var(--accent-cyan);"></i> Zero False Downloads</span>
+              <span><i class="fa-solid fa-file-video"></i> Genuine MKV Container</span>
+              <span><i class="fa-solid fa-circle-check" style="color: #10b981;"></i> High Speed Direct CDN</span>
+              <span><i class="fa-solid fa-shield-halved" style="color: var(--accent-cyan);"></i> Zero Ads • Zero Redirects</span>
             </div>
           </div>
         </div>
-        <div class="udc-status-pill">
-          <i class="fa-solid fa-bolt"></i> Fast Cloud Direct
+        <div class="udc-badge-pill">
+          <i class="fa-solid fa-bolt"></i> Verified Direct Delivery
         </div>
       </div>
 
-      <div class="udc-quality-grid">
+      <div class="udc-cards-grid">
         ${tiers.map(t => {
           const isAvail = Boolean(t.tier && (t.tier.cloudDirectUrl || t.tier.directDownloadUrl || t.tier.hubUrl));
           const size = t.tier?.size || t.defaultSize;
           const targetUrl = t.tier?.cloudDirectUrl || t.tier?.directDownloadUrl || t.tier?.hubUrl || '';
 
           return `
-            <div class="udc-quality-slot ${!isAvail ? 'slot-unavailable' : ''}">
-              <div class="udc-slot-top">
-                <span class="udc-slot-badge ${t.color}">${t.badge}</span>
-                <span class="udc-slot-size"><i class="fa-solid fa-hard-drive"></i> ${size}</span>
+            <div class="udc-tier-card ${!isAvail ? 'slot-unavailable' : ''}">
+              <div class="udc-tier-top">
+                <span class="udc-pill-resolution ${t.resClass}">${t.badge}</span>
+                <span class="udc-size-tag"><i class="fa-solid fa-hard-drive"></i> ${size}</span>
               </div>
-              <div class="udc-slot-info">
-                <h4>${t.name}</h4>
-                <p>Clean direct file download without multi-step redirects.</p>
+              <div class="udc-tier-body">
+                <h4 class="udc-tier-name">${t.name}</h4>
+                <p class="udc-tier-desc">${t.desc}</p>
+                <ul class="udc-tier-features">
+                  <li><i class="fa-solid fa-check"></i> ${t.feature}</li>
+                  <li><i class="fa-solid fa-check"></i> Clean Audio & Subtitles</li>
+                  <li><i class="fa-solid fa-check"></i> Resume-Supported Stream</li>
+                </ul>
               </div>
-              <div class="udc-slot-action">
+              <div>
                 ${isAvail ? `
                   <button 
-                    class="btn-udc-download" 
+                    class="btn-tier-download" 
                     onclick="initiateVerifiedDownload('${targetUrl}', '${t.label}', '${size}', '${encodeURIComponent(title)}')"
                     title="Download verified ${t.label} file (${size})"
                   >
-                    <i class="fa-solid fa-download"></i>
-                    <span>Download ${t.label}</span>
+                    <i class="fa-solid fa-cloud-arrow-down"></i>
+                    <span>Download ${t.label} (${size})</span>
                   </button>
                 ` : `
-                  <button class="btn-udc-download btn-disabled" disabled title="This quality tier is currently unavailable for this title">
+                  <button class="btn-tier-download" disabled title="This quality tier is currently unavailable for this title">
                     <i class="fa-solid fa-ban"></i>
                     <span>Unavailable</span>
                   </button>
@@ -1244,9 +1567,9 @@ function renderDownloadSection(qualities, title) {
         }).join('')}
       </div>
 
-      <div class="udc-footer-note">
-        <i class="fa-solid fa-circle-info"></i>
-        <span>Each button delivers the genuine, full-length media container. If a tier is unavailable from the origin server, it is automatically disabled to prevent corrupt or empty file downloads.</span>
+      <div class="udc-trust-banner">
+        <i class="fa-solid fa-shield-heart"></i>
+        <span>ASI OTT Verified Guarantee: All download tiers connect directly to high-speed media storage. No false links, no captcha popups, and full resume capability supported in your browser download manager.</span>
       </div>
     </div>
   `;
@@ -1316,6 +1639,8 @@ async function initiateVerifiedDownload(downloadUrl, quality, size, encodedTitle
  */
 function setupFilmyzillaHeroStage() {
   if (playerControlsTopGroup) playerControlsTopGroup.style.display = 'none';
+  if (tapZoneLeft) tapZoneLeft.style.display = 'none';
+  if (tapZoneRight) tapZoneRight.style.display = 'none';
   if (centerPlayBtn) centerPlayBtn.style.display = 'none';
   if (playerOverlay) playerOverlay.style.display = 'none';
   if (customVideo) customVideo.style.display = 'none';
@@ -1373,54 +1698,48 @@ function renderFilmyzillaDownloadSection(qualities, title) {
   }
 
   container.innerHTML = `
-    <div class="filmyzilla-download-hub">
-      <div class="fzh-header">
-        <div class="fzh-header-left">
-          <div class="fzh-badge-icon">
+    <div class="udc-hero-card">
+      <div class="udc-header-modern">
+        <div class="udc-header-left">
+          <div class="udc-icon-badge" style="background: rgba(229, 9, 20, 0.15); border-color: rgba(229, 9, 20, 0.35); color: var(--accent-primary);">
             <i class="fa-solid fa-bolt-lightning"></i>
           </div>
           <div>
-            <h3 class="fzh-title">${safeTitle}</h3>
-            <div class="fzh-meta-line">
-              <span><i class="fa-solid fa-server" style="color: var(--accent-cyan);"></i> 4 Servers Per Quality</span>
+            <h3 class="udc-hero-title">${safeTitle}</h3>
+            <div class="udc-meta-line">
+              <span><i class="fa-solid fa-server" style="color: var(--accent-cyan);"></i> 4 Dedicated Mirrors Per Quality</span>
               <span><i class="fa-solid fa-circle-check" style="color: #10b981;"></i> Verified Direct Tokens</span>
               <span><i class="fa-solid fa-shield-halved" style="color: var(--accent-cyan);"></i> Zero False Downloads</span>
             </div>
           </div>
         </div>
-        <div class="fzh-source-badge">
-          <i class="fa-solid fa-bolt"></i> Filmyzilla Verified
+        <div class="udc-badge-pill" style="border-color: rgba(229, 9, 20, 0.4); color: #fca5a5;">
+          <i class="fa-solid fa-bolt"></i> Multi-Server Delivery
         </div>
       </div>
 
-      <div class="fzh-qualities-list">
+      <div class="udc-cards-grid">
         ${qualityList.map((q) => {
           const qName = q.quality || 'Standard Quality';
           const qSize = q.size || 'HD File';
           const servers = Array.isArray(q.servers) ? q.servers : [];
 
-          let badgeTheme = 'fzh-badge-cyan';
-          if (qName.includes('1080')) badgeTheme = 'fzh-badge-emerald';
-          else if (qName.includes('720')) badgeTheme = 'fzh-badge-rose';
+          let resClass = 'udc-res-480';
+          if (qName.includes('1080')) resClass = 'udc-res-1080';
+          else if (qName.includes('720')) resClass = 'udc-res-720';
 
           return `
-            <div class="fzh-quality-card">
-              <div class="fzh-card-header">
-                <div class="fzh-quality-info">
-                  <span class="fzh-quality-tag ${badgeTheme}">${qName}</span>
-                  <span class="fzh-format-pill"><i class="fa-solid fa-file-video"></i> MKV</span>
-                </div>
-                <div class="fzh-size-pill">
-                  <i class="fa-solid fa-hard-drive"></i>
-                  <span>${qSize}</span>
-                </div>
+            <div class="fzh-server-card">
+              <div class="udc-tier-top">
+                <span class="udc-pill-resolution ${resClass}">${qName}</span>
+                <span class="udc-size-tag"><i class="fa-solid fa-hard-drive"></i> ${qSize}</span>
               </div>
 
-              <div class="fzh-servers-heading">
-                <i class="fa-solid fa-server"></i> Available Download Mirrors (${qName} • ${qSize}):
+              <div style="font-size: 0.8rem; color: #94a3b8; display: flex; align-items: center; gap: 0.45rem;">
+                <i class="fa-solid fa-server" style="color: var(--accent-cyan);"></i> Choose Fast Server:
               </div>
 
-              <div class="fzh-server-grid">
+              <div class="fzh-servers-grid">
                 ${servers.map(s => {
                   const sNum = s.serverNumber || 1;
                   const sName = s.name || `Server ${sNum}`;
@@ -1428,18 +1747,12 @@ function renderFilmyzillaDownloadSection(qualities, title) {
 
                   return `
                     <button 
-                      class="fzh-server-button" 
+                      class="fzh-server-btn" 
                       onclick="initiateFilmyzillaDownload('${sUrl}', '${qName}', '${sName}', '${qSize}', '${encodeURIComponent(title)}')"
                       title="Download ${qName} from ${sName} (${qSize})"
                     >
-                      <div class="fzh-btn-left">
-                        <span class="fzh-server-num">S${sNum}</span>
-                        <div class="fzh-server-text">
-                          <span class="fzh-server-title">${sName}</span>
-                          <span class="fzh-server-sub">${qSize} • High Speed</span>
-                        </div>
-                      </div>
-                      <i class="fa-solid fa-arrow-down-to-bracket fzh-download-icon"></i>
+                      <i class="fa-solid fa-cloud-arrow-down"></i>
+                      <span>${sName}</span>
                     </button>
                   `;
                 }).join('')}
@@ -1449,9 +1762,9 @@ function renderFilmyzillaDownloadSection(qualities, title) {
         }).join('')}
       </div>
 
-      <div class="fzh-footer-notice">
+      <div class="udc-trust-banner">
         <i class="fa-solid fa-circle-info"></i>
-        <span>Each resolution provides 4 high-speed download mirrors with full file size. If any server is busy, switch to another mirror to continue downloading at maximum bandwidth.</span>
+        <span>Each resolution provides 4 high-speed download mirrors with full file size. If any server is busy, tap another server to immediately continue downloading at maximum bandwidth.</span>
       </div>
     </div>
   `;

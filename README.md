@@ -15,7 +15,7 @@
   [![Open Source](https://img.shields.io/badge/Open%20Source-%E2%99%A5-ff69b4.svg)](https://github.com/git-masterontheway/ASI-OTT)
 
   <p align="center">
-    A state-of-the-art, open-source streaming platform that seamlessly aggregates movies, web series, TV shows, and vertical mini dramas across high-speed sources with horizontal on-site video playback and zero-redirect direct cloud downloads.
+    A state-of-the-art, open-source streaming platform that seamlessly aggregates movies, web series, TV shows, and vertical mini dramas across high-speed sources with horizontal on-site video playback, anti-redirect player sandboxing, and zero-redirect direct cloud downloads.
   </p>
 
 </div>
@@ -49,26 +49,92 @@ You can access and test the live running deployment of ASI OTT through any of th
 
 ---
 
-## ✨ Key Features & Architecture
+## ✨ What's New in Version 2.3.0 (Major Release)
 
-- **Multi-Source Real-Time Aggregator:** Simultaneously aggregates and deduplicates catalog titles from top high-speed providers with automatic mirror resolution.
-- **Clean Content Masking:** All referrers and source tags are masked from cards and thumbnails—users see only clean categories (`Movies`, `Web Series`, `TV Shows`, `Mini Drama`) and quality badges.
-- **Unified Search & Category Dropdown:** Integrated search bar with instant dropdown filtering (`All`, `Mini Drama`, `Movies`, `TV Shows`, `Web Series`) that automatically synchronizes with swipeable mobile category tabs.
-- **Cinematic Website Splash Screen:** High-impact opening splash featuring the official ASI OTT brand logo with radial aura pulse and smooth auto-dismiss once per browser session.
-- **Branded Video Buffering Animation:** Custom in-player loading screen utilizing the brand logo with breathing glow effect, cyan/red radial aura, and indeterminate stream progress bar.
-- **Advanced Video Player Controls:**
-  - Integrated in-player settings popover for **Brightness** (40%–200%), **Playback Speed** (0.5x–3.0x), and **Audio Booster** (up to 300%).
-  - Screen rotation lock/toggle for mobile landscape and portrait viewing.
-  - Aspect ratio switcher (16:9 Widescreen, 4:3 Classic, Theater Fill).
-  - Multi-audio language track selection & custom subtitle upload support.
-- **Zero-Redirect Direct Cloud Downloads:** Direct download delivery for 480p, 720p, 1080p, and 4K UHD with genuine file sizes and clean filenames without external popups or link shorteners.
-- **Dual Production Ready:** Pre-configured with [`render.yaml`](render.yaml) (Render Web Service Blueprint) and [`vercel.json`](vercel.json) (Vercel Edge Functions).
+### 🎬 1. Dedicated "Movies Central" Hub (`/movies.html`)
+- **Zero Mini Drama Guarantee**: Dedicated route and standalone interface completely filtered from mini-drama / vertical content.
+- **Pure Referer Category Mapping**: Directly scrapes categorized archives from upstream providers, completely eliminating category bleeding (e.g., Hollywood titles accidentally displaying in Bollywood).
+- **5 Clean Content Categories**:
+  - **Bollywood Cinema** (Hindi Org & HQ Releases)
+  - **Hollywood Dual Audio** (Hindi + English Multi-Audio 4K UHD)
+  - **South Hindi Dubbed** (Tollywood, Kollywood, Sandalwood Hindi Dubbed Blockbusters)
+  - **Korean & Asian Cinema** (K-Dramas, Asian Cinema, Multi-Audio)
+  - **Web Series Archive** (Complete Seasons & Episodes)
+- **Top Sticky Navbar with Scrolled Sub-Header**: Navbar stays fixed for 1-click navigation (`Home`, `MOVIES`, `Telegram`), while the search bar and category chips scroll naturally with content to maximize screen viewing area.
+
+---
+
+### 🎥 2. Player 2.0 Streaming Engine (`watch.html` & `player.js`)
+- **Buffered Timeline Indicator**: Real-time visualization on the playback scrub bar showing exactly how many seconds/minutes of video are pre-buffered ahead.
+- **Smart Seek Zones (10s Skip)**:
+  - **Center Click / Tap**: Instant Play / Pause toggle with animated ripple indicator.
+  - **Left Zone (Double Click / Tap)**: Smooth -10 seconds rewind with back arrow badge.
+  - **Right Zone (Double Click / Tap)**: Smooth +10 seconds fast-forward with forward arrow badge.
+- **Full Keyboard Navigation**:
+  - `Space` / `K`: Play / Pause toggle
+  - `Left Arrow` / `J`: -10 Seconds Seek Backward
+  - `Right Arrow` / `L`: +10 Seconds Seek Forward
+  - `Up Arrow` / `Down Arrow`: Volume Up / Down (10% increments)
+  - `M`: Mute / Unmute toggle
+  - `F`: Fullscreen mode toggle
+  - `0` to `9`: Jump directly to 0% – 90% of playback timeline
+- **Anti-Redirect Sandboxing Shield**: Hardened sandbox security policy on embedded iframe players preventing third-party popups, malicious ads, or unauthorized external domain redirects while allowing seamless video rendering and HTML5 playback.
+- **Web Audio 300% Booster**: Integrated Web Audio API GainNode processor enabling sound volume amplification up to 300% for quiet movie releases.
+- **Aspect Ratio & Screen Rotation**: 16:9 Widescreen, 9:16 Vertical Mobile Mode, and 4:3 Theater modes with instant orientation lock.
+
+---
+
+### 🛡️ 3. Redesigned Premium OTT Site Footer
+- **Universal Uniformity**: Deployed identically across `index.html`, `movies.html`, and `watch.html`.
+- **Telegram Community CTA Card**: Glowing frosted banner linking users directly to the official community channel (`@ASI_OTT_discussion`).
+- **Quick Browse Genre Strip**: 1-click category jumping (`Bollywood`, `Hollywood`, `South Dubbed`, `Korean`, `Web Series`, `4K UHD`).
+- **4-Column Clean Layout**:
+  - *Column 1*: Brand identity, mission, and live system status pills (`CDN Edge Network: Online 99.9%`, `Ad Shield: Zero Redirects`).
+  - *Column 2*: Explore Content navigation.
+  - *Column 3*: Streaming Experience & technical capabilities.
+  - *Column 4*: Transparency & DMCA compliance statement framed in a frosted glass card with trust badges (`256-Bit SSL`, `Safe Browsing`, `Fast CDN`).
+- **Interactive Back-to-Top**: Smooth scrolling action button returning users to the top of the page.
+
+---
+
+### 🔢 4. Floating Glass OTT Pagination Bar
+- **Frosted Glass Capsule**: Clean rounded pill design with glowing borders and dark translucent backing.
+- **Current Page Badge**: Visual indicator (`Page X of Y`) providing immediate orientation across large catalogs.
+- **Active Page Glow**: Glowing red gradient pill with elevation and drop-shadow.
+- **Auto-Scroll to Grid Top**: Clicking any page automatically scrolls smoothly to the top of the content grid.
+
+---
+
+### 🕷️ 5. Crawler & Referer Engine Upgrades (`server.js`)
+- **HDHub4u Dynamic Domain Resolution**: Automatically resolves mirrors via `https://hdhub4u.fast/` inspection flow to connect with the latest active domain (e.g. `https://new9.hdhub4u.cl/`) without manual server edits.
+- **HDMobi Provider Integration**: Direct catalog scraping and stream extraction from `https://hdmobi.in/`.
+- **GHDHub Provider Integration**: Direct download location resolving and media stream aggregation from `https://ghdhub.org/`.
+- **MicroTV Referer Endpoint Update**: Synchronized with `m.microtv.st`.
+- **Movies4u Multi-Category Archive Scraper**: Dedicated endpoint scraping for `/category/bollywood-movies/`, `/category/hollywood-movies/`, `/category/south-hindi-movies/`, `/category/korean/`, and `/category/web-series/`.
+
+---
+
+## 💡 Future Roadmap & New Ideas (Upcoming Features)
+
+Here are the planned architectural enhancements and innovative features scheduled for upcoming releases:
+
+1. **📱 Progressive Web App (PWA) with Offline Caching**:
+   - Full Service Worker support enabling users to install ASI OTT on Windows, macOS, Android, and iOS.
+   - Offline metadata caching allowing instant loading of previously visited pages.
+2. **📺 Chromecast & AirPlay Integration**:
+   - Native Google Cast and Apple AirPlay integration enabling 1-click casting from the browser directly to Smart TVs.
+3. **🔊 Audio Delay & Subtitle Sync Offset**:
+   - In-player slider control to adjust audio/subtitle delay (+/- 500ms) to fix synchronization issues on multi-audio or third-party subtitles.
+4. **🤖 Automated Telegram Release Bot**:
+   - Real-time webhook bot posting new movie releases, direct watch links, and 4K download mirrors directly into the `@ASI_OTT_discussion` channel.
+5. **⭐ Personalized LocalStorage Watchlist & Continue Watching**:
+   - Zero-login local watchlist allowing users to bookmark favorite series and resume movies from their exact last timestamp.
+6. **⚡ Peer-to-Peer (WebTorrent / HLS P2P) Mesh Acceleration**:
+   - P2P video delivery using WebRTC data channels to reduce server egress bandwidth and provide ultra-fast 4K streaming during peak hours.
 
 ---
 
 ## 🚀 Local Installation & Execution
-
-Follow these step-by-step instructions to clone and run ASI OTT locally on your machine.
 
 ### Prerequisites
 
@@ -81,8 +147,6 @@ Ensure you have the following installed on your system:
 
 ### Step 1: Clone the Repository
 
-Open your terminal (PowerShell, Bash, or Command Prompt) and run:
-
 ```bash
 git clone https://github.com/git-masterontheway/ASI-OTT.git
 cd ASI-OTT
@@ -91,8 +155,6 @@ cd ASI-OTT
 ---
 
 ### Step 2: Install Dependencies
-
-Install the required production and development dependencies:
 
 ```bash
 npm install
@@ -136,9 +198,9 @@ Start the application:
 npm start
 ```
 
-Or run directly with Node:
+Or run in development watch mode:
 ```bash
-node server.js
+npm run dev
 ```
 
 ---
@@ -154,35 +216,21 @@ Environment:               development
 Production Domain:         https://asi-ott.xo.je
 Health Check:              http://0.0.0.0:3000/health
 Home / Search:             http://0.0.0.0:3000
+Movies Central:            http://0.0.0.0:3000/movies.html
 Watch Page:                http://0.0.0.0:3000/watch
 ===============================================
 ```
 
-> **Automatic Port Conflict Resolution:**  
-> If port `3000` is already in use by another application on your system, the server will automatically detect the conflict and step to `3001` (`http://localhost:3001`). Look at the terminal output to confirm the exact port.
-
 ---
 
-### Step 6: Open in Your Browser
-
-Navigate to the local URLs in your web browser:
+### Step 6: Available Pages & Local Endpoints
 
 | Page / Endpoint | URL | Description |
 | :--- | :--- | :--- |
-| **Homepage & Search** | [`http://localhost:3000/`](http://localhost:3000/) | Full catalog, splash screen, category filter dropdown |
-| **Watch & Player** | [`http://localhost:3000/watch`](http://localhost:3000/watch) | Video player, in-player controls, direct downloads |
+| **Homepage & Search** | [`http://localhost:3000/`](http://localhost:3000/) | Full multi-source catalog, splash screen, category filter dropdown |
+| **Movies Central Hub** | [`http://localhost:3000/movies.html`](http://localhost:3000/movies.html) | Dedicated movies hub, no drama content, Bollywood, Hollywood, South, Korean |
+| **Watch & Player** | [`http://localhost:3000/watch`](http://localhost:3000/watch) | Video player 2.0, buffered timeline, 10s seek zones, direct downloads |
 | **Health Check API** | [`http://localhost:3000/health`](http://localhost:3000/health) | JSON uptime and system health diagnostics |
-
----
-
-## 🛠️ Troubleshooting Common Issues
-
-| Issue / Error | Cause | Solution |
-| :--- | :--- | :--- |
-| `EADDRINUSE: address already in use :::3000` | Port 3000 is occupied by another local app. | ASI OTT automatically binds to port `3001`. Alternatively, set `PORT=3005` in your `.env` file. |
-| `Permission denied (publickey)` | SSH key not authorized on GitHub. | Add your deploy public key in GitHub under **Repository Settings > Deploy keys** with **Allow write access** checked. |
-| Scraper network timeouts | Network latency or rate limiting. | The server includes automated fallbacks, exponential backoff, and proxy failovers. Refreshing the search will re-query active mirrors. |
-| Video player stream buffering | Source video host bandwidth throttling. | Switch between **Direct Stream Player** and **Embedded Player** via the top toggle switch on the watch page. |
 
 ---
 
@@ -192,8 +240,10 @@ Navigate to the local URLs in your web browser:
 | :--- | :--- | :--- | :--- |
 | `/health` | `GET` | — | Returns server health, uptime, and deployment environment. |
 | `/api/content` | `GET` | `?page=1&category=all` | Aggregates titles by page and category (`all`, `mini_drama`, `movies`, `tv_shows`, `web_series`). |
-| `/api/search` | `GET` | `?q=query&category=all` | Parallel search across all source catalogs with category filtering. |
+| `/api/movies/sections` | `GET` | — | Returns 5 distinct categories scraped directly from upstream category endpoints. |
+| `/api/search` | `GET` | `?q=query&category=all&no_drama=1` | Parallel search across all source catalogs with drama filtering guard. |
 | `/api/post` | `GET` | `?id=:id&source=:source` | Resolves item details, media streams, and download links. |
+| `/api/source-stream` | `GET` | `?url=...&referer=...` | Proxies video streams and m3u8 playlists bypassing CORS and anti-hotlinking. |
 | `/api/stream-download` | `GET` | `?url=...&filename=...` | Proxies high-speed direct downloads with genuine attachment headers. |
 | `/api/views/track` | `POST` | `{ id: "slug" }` | Records unique IP view analytics. |
 
@@ -205,24 +255,26 @@ Navigate to the local URLs in your web browser:
 ASI-OTT/
 ├── public/                     # Static frontend assets
 │   ├── css/
-│   │   └── style.css           # Premium OTT theme & responsive styling
+│   │   └── style.css           # Premium OTT theme, player controls, footer & pagination
 │   ├── js/
-│   │   ├── app.js              # Catalog browsing, search & category filters
-│   │   └── player.js           # Video player, settings, and direct downloads
+│   │   ├── app.js              # Home catalog browsing, search & category filters
+│   │   ├── movies.js           # Dedicated Movies Hub controller & pagination logic
+│   │   └── player.js           # Video player 2.0, buffer timeline, seek zones, shortcuts
 │   ├── index.html              # Main landing page with unified search
+│   ├── movies.html             # Dedicated Movies Central Hub (Zero Mini Drama)
 │   ├── watch.html              # Dedicated media streaming & download interface
 │   ├── logo.png                # Official brand logo
 │   └── favicon.svg             # Modern vector favicon
 ├── api/
 │   └── index.js                # Serverless bridge for Vercel deployment
 ├── data/                       # Local database storage (views tracking)
-├── server.js                   # Core Express backend, scrapers & API endpoints
+├── server.js                   # Core Express backend, scrapers & dynamic mirror resolution
 ├── render.yaml                 # Render persistent Web Service configuration
 ├── vercel.json                 # Vercel serverless edge configuration
 ├── .env.example                # Example environment configuration
 ├── package.json                # Project dependencies and startup scripts
 ├── LICENSE                     # MIT Open Source License
-└── README.md                   # Project documentation
+└── README.md                   # Comprehensive project documentation & roadmap
 ```
 
 ---

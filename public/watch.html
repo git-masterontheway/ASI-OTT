@@ -31,10 +31,41 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
   <!-- Main Stylesheet -->
-  <link rel="stylesheet" href="/css/style.css?v=2.2.0">
+  <link rel="stylesheet" href="/css/style.css?v=2.3.0">
 
   <!-- HLS.js for HLS (.m3u8) Playback -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8/dist/hls.min.js"></script>
+
+  <!-- Anti-Redirect & Anti-Popup Guard for Embedded Players -->
+  <script>
+    (function() {
+      // 1. Guard window.open: Block third-party popup windows / ad redirects
+      const _origOpen = window.open;
+      window.open = function(url, target, features) {
+        if (url) {
+          try {
+            const parsed = new URL(url, window.location.href);
+            // Allow same-origin navigation, block external third-party ad domains
+            if (parsed.origin !== window.location.origin) {
+              console.warn('[AdShield] Blocked popup/redirect to external domain:', url);
+              return null;
+            }
+          } catch (_) {}
+        }
+        return _origOpen.apply(this, arguments);
+      };
+
+      // 2. Prevent top-level window redirection triggered by iframe clicks
+      window.addEventListener('beforeunload', function(e) {
+        const frame = document.getElementById('embed-iframe');
+        if (frame && frame.style.display !== 'none' && document.activeElement === frame) {
+          e.preventDefault();
+          e.returnValue = '';
+          return '';
+        }
+      });
+    })();
+  </script>
 </head>
 <body>
 
@@ -69,7 +100,7 @@
       <!-- Main Navigation with Telegram Icon Only -->
       <nav class="nav-actions">
         <a href="/" class="nav-link" title="Home"><i class="fa-solid fa-house"></i> <span>Home</span></a>
-        <a href="/#series-section" class="nav-link" title="Trending"><i class="fa-solid fa-fire"></i> <span>Trending</span></a>
+        <a href="/movies.html" class="nav-link" title="Movies"><i class="fa-solid fa-film"></i> <span>MOVIES</span></a>
         <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="nav-link nav-telegram-icon" title="Telegram Discussion">
           <i class="fa-brands fa-telegram"></i>
         </a>
@@ -101,12 +132,23 @@
           playsinline 
           webkit-playsinline 
           preload="auto"
-          poster="https://new.microtv.st/assets/images/placeholder.jpg"
+          poster="https://m.microtv.st/assets/images/placeholder.jpg"
         >
           Your browser does not support HTML5 video playback.
         </video>
 
         <!-- Embedded Iframe Player (Direct On-Site, Full Media Capabilities) -->
+        <div class="embed-speed-bar" id="embed-speed-bar" style="display: none;">
+          <span class="embed-badge"><i class="fa-solid fa-tv"></i> Embed Player</span>
+          <div class="embed-speed-controls">
+            <span class="embed-speed-lbl"><i class="fa-solid fa-gauge-high"></i> Speed:</span>
+            <button class="embed-speed-btn" data-speed="0.75">0.75x</button>
+            <button class="embed-speed-btn active" data-speed="1.0">1.0x</button>
+            <button class="embed-speed-btn" data-speed="1.25">1.25x</button>
+            <button class="embed-speed-btn" data-speed="1.5">1.5x</button>
+            <button class="embed-speed-btn" data-speed="2.0">2.0x</button>
+          </div>
+        </div>
         <iframe 
           id="embed-iframe" 
           style="display: none;" 
@@ -141,6 +183,11 @@
           <div class="player-top-controls">
             <span class="player-title-display" id="overlay-title">Loading title...</span>
             <div class="top-actions">
+              <!-- Smart Buffer Lookahead Badge (10m Ready) -->
+              <div class="player-buffer-indicator" id="player-buffer-indicator" title="10-Minute Smart Lookahead Pre-buffer Active">
+                <i class="fa-solid fa-bolt"></i>
+                <span id="buffer-indicator-text">10m Buffer Active</span>
+              </div>
               <button class="ctrl-btn" id="ctrl-share-btn" title="Share Watch Link">
                 <i class="fa-solid fa-share-nodes"></i>
               </button>
@@ -155,16 +202,33 @@
             <span id="quick-skip-text">+10s</span>
           </div>
 
+          <!-- Interactive Tap Zones (Click Left = 10s back, Click Right = 10s forward) -->
+          <div class="player-tap-zone tap-zone-left" id="tap-zone-left" title="Click or Tap to Rewind 10s">
+            <div class="tap-zone-ripple">
+              <i class="fa-solid fa-rotate-left"></i>
+              <span>-10s</span>
+            </div>
+          </div>
+          <div class="player-tap-zone tap-zone-right" id="tap-zone-right" title="Click or Tap to Forward 10s">
+            <div class="tap-zone-ripple">
+              <i class="fa-solid fa-rotate-right"></i>
+              <span>+10s</span>
+            </div>
+          </div>
+
           <!-- Center Big Play/Pause Button Overlay -->
-          <div class="center-play-trigger" id="center-play-btn" title="Play / Pause Video">
+          <div class="center-play-trigger" id="center-play-btn" title="Play / Pause Video (Space)">
             <i class="fa-solid fa-play" id="center-play-icon" style="margin-left: 4px;"></i>
           </div>
 
           <!-- Bottom Overlay Bar with Navigation Controls & Timeline -->
           <div class="player-bottom-controls">
-            <!-- Seekbar / Progress Container with Smooth Scrubbing & Hover Tooltip -->
+            <!-- Seekbar / Progress Container with Loaded Buffer Bar & Scrubbing -->
             <div class="progress-container" id="progress-container">
               <div class="seek-tooltip" id="seek-tooltip">00:00:00</div>
+              <!-- Loaded / Buffered Timeline Bar -->
+              <div class="progress-buffer-bar" id="progress-buffer-bar"></div>
+              <!-- Played Progress Bar -->
               <div class="progress-bar" id="progress-bar">
                 <div class="progress-thumb"></div>
               </div>
@@ -211,6 +275,11 @@
                 <!-- Volume / Mute -->
                 <button class="ctrl-btn" id="ctrl-mute-btn" title="Mute/Unmute">
                   <i class="fa-solid fa-volume-high" id="ctrl-volume-icon"></i>
+                </button>
+
+                <!-- Quick Speed Selector Button -->
+                <button class="ctrl-btn ctrl-speed-pill" id="ctrl-speed-btn" title="Playback Speed (Click to change)">
+                  <span id="ctrl-speed-label">1.0x</span>
                 </button>
 
                 <!-- In-Player Integrated Settings Gear (Speed, Brightness, Audio Booster) -->
@@ -328,6 +397,22 @@
             </div>
           </div>
 
+          <!-- Quick Speed Floating Popover -->
+          <div class="player-settings-popover player-speed-popover" id="player-speed-popover">
+            <div class="settings-pop-header">
+              <span><i class="fa-solid fa-gauge-high"></i> Playback Speed</span>
+              <button class="settings-close-btn" id="speed-pop-close-btn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="speed-menu-list">
+              <button class="speed-opt" data-speed="0.5">0.5x Slow</button>
+              <button class="speed-opt" data-speed="0.75">0.75x</button>
+              <button class="speed-opt active" data-speed="1.0">1.0x Normal</button>
+              <button class="speed-opt" data-speed="1.25">1.25x</button>
+              <button class="speed-opt" data-speed="1.5">1.5x</button>
+              <button class="speed-opt" data-speed="2.0">2.0x Fast</button>
+            </div>
+          </div>
+
         </div>
 
       </div>
@@ -340,10 +425,10 @@
         <div class="detail-poster-container" id="detail-poster-container">
           <img 
             id="detail-poster" 
-            src="https://new.microtv.st/assets/images/placeholder.jpg" 
+            src="https://m.microtv.st/assets/images/placeholder.jpg" 
             alt="Title Thumbnail" 
             class="detail-primary-poster"
-            onerror="this.onerror=null; this.src='https://new.microtv.st/assets/images/placeholder.jpg'"
+            onerror="this.onerror=null; this.src='https://m.microtv.st/assets/images/placeholder.jpg'"
           >
         </div>
 
@@ -407,39 +492,127 @@
 
   </div>
 
-  <!-- Consistent Site Footer with Dynamic Year & Developer Credit -->
+  <!-- Premium Modern OTT Site Footer -->
   <footer class="site-footer">
     <div class="footer-container">
-      <div class="footer-top-row">
-        <div class="footer-brand">
-          <div class="brand-logo">
-            <i class="fa-solid fa-play-circle brand-highlight"></i>
-            <span>ASI<span class="brand-highlight">OTT</span></span>
+      
+      <!-- Top CTA Banner: Community & Instant Updates -->
+      <div class="footer-cta-banner">
+        <div class="footer-cta-content">
+          <div class="footer-cta-icon">
+            <i class="fa-brands fa-telegram"></i>
           </div>
-          <p class="footer-desc">
-            ASI OTT is an advanced multi-source content aggregation platform delivering high-definition movies, web series, and vertical short dramas with horizontal video playback and seamless direct cloud downloads.
-          </p>
+          <div class="footer-cta-text">
+            <h3>Join Our Official Telegram Community</h3>
+            <p>Get instant updates for new Bollywood, Hollywood Dual Audio, South & 4K OTT releases, direct download links & movie requests.</p>
+          </div>
         </div>
-
-        <div class="footer-nav-links">
-          <a href="/" class="footer-link"><i class="fa-solid fa-house"></i> Home</a>
-          <a href="/#series-section" class="footer-link"><i class="fa-solid fa-fire"></i> Trending</a>
-          <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="footer-link footer-telegram">
-            <i class="fa-brands fa-telegram"></i> Telegram Discussion
+        <div class="footer-cta-actions">
+          <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="btn-footer-tg">
+            <i class="fa-brands fa-telegram"></i> <span>Join Discussion</span>
+            <i class="fa-solid fa-arrow-up-right-from-square"></i>
           </a>
+        </div>
+      </div>
+
+      <!-- Quick Genre Pills Bar -->
+      <div class="footer-genre-pills">
+        <span class="footer-pills-label"><i class="fa-solid fa-fire"></i> Quick Browse:</span>
+        <div class="footer-pills-list">
+          <a href="/movies.html?genre=bollywood" class="footer-pill">Bollywood Cinema</a>
+          <a href="/movies.html?genre=hollywood" class="footer-pill">Hollywood (Dual Audio)</a>
+          <a href="/movies.html?genre=south_movies" class="footer-pill">South Hindi Dubbed</a>
+          <a href="/movies.html?genre=korean_movies" class="footer-pill">Korean & Asian</a>
+          <a href="/movies.html?genre=web_series" class="footer-pill">Web Series</a>
+          <a href="/movies.html" class="footer-pill">4K UHD Movies</a>
         </div>
       </div>
 
       <div class="footer-divider"></div>
 
-      <div class="footer-bottom-row">
-        <div class="footer-copyright">
-          Copyright <span id="current-year"></span> ASI OTT. Built by ASI Developer Team.
+      <!-- Main 4-Column Grid -->
+      <div class="footer-grid-columns">
+        
+        <!-- Column 1: Brand & Status -->
+        <div class="footer-col footer-col-brand">
+          <a href="/" class="footer-brand-logo">
+            <img src="/logo.png" alt="ASI OTT" class="footer-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex'">
+            <span style="display: none;"><i class="fa-solid fa-play-circle brand-highlight"></i> ASI<span class="brand-highlight">OTT</span></span>
+          </a>
+          <p class="footer-desc">
+            ASI OTT is a premier multi-source entertainment platform engineered for seamless 4K UHD streaming, multi-audio cinema, and verified instant direct cloud downloads without popups or third-party redirects.
+          </p>
+          <div class="footer-system-status">
+            <div class="status-item">
+              <span class="status-pulse-dot"></span>
+              <span class="status-label">CDN Edge Network: <strong>Online (99.9%)</strong></span>
+            </div>
+            <div class="status-item">
+              <i class="fa-solid fa-shield-halved" style="color: #34d399;"></i>
+              <span class="status-label">Ad Shield: <strong>Zero Redirects</strong></span>
+            </div>
+          </div>
         </div>
-        <div class="footer-developer">
-          <i class="fa-solid fa-shield-halved"></i> Internal Testing Environment • Authorized Platform
+
+        <!-- Column 2: Explore Content -->
+        <div class="footer-col">
+          <h4 class="footer-col-title"><i class="fa-solid fa-compass"></i> Explore Content</h4>
+          <ul class="footer-links-list">
+            <li><a href="/"><i class="fa-solid fa-house"></i> Home All Streaming</a></li>
+            <li><a href="/movies.html"><i class="fa-solid fa-film"></i> Movies Central</a></li>
+            <li><a href="/movies.html?genre=bollywood"><i class="fa-solid fa-clapperboard"></i> Bollywood Cinema</a></li>
+            <li><a href="/movies.html?genre=hollywood"><i class="fa-solid fa-video"></i> Hollywood (Dual Audio)</a></li>
+            <li><a href="/movies.html?genre=south_movies"><i class="fa-solid fa-fire-flame-curved"></i> South Hindi Dubbed</a></li>
+            <li><a href="/movies.html?genre=korean_movies"><i class="fa-solid fa-masks-theater"></i> Korean & Asian Movies</a></li>
+            <li><a href="/movies.html?genre=web_series"><i class="fa-solid fa-layer-group"></i> Web Series Archive</a></li>
+          </ul>
+        </div>
+
+        <!-- Column 3: Streaming Tech & Experience -->
+        <div class="footer-col">
+          <h4 class="footer-col-title"><i class="fa-solid fa-bolt"></i> Streaming Experience</h4>
+          <ul class="footer-links-list">
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #38bdf8;"></i> 480p, 720p, 1080p & 4K UHD</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #eab308;"></i> 10m Lookahead Pre-Buffering</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #34d399;"></i> 300% Web Audio Booster</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #a855f7;"></i> Cinema 16:9 & Mobile 9:16</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #f43f5e;"></i> Direct Fast Cloud Downloads</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #06b6d4;"></i> Keyboard Shortcuts (Space/Arrows)</span></li>
+          </ul>
+        </div>
+
+        <!-- Column 4: DMCA & Transparency Card -->
+        <div class="footer-col footer-col-disclaimer">
+          <h4 class="footer-col-title"><i class="fa-solid fa-scale-balanced"></i> Transparency & DMCA</h4>
+          <div class="footer-disclaimer-box">
+            <p>
+              ASI OTT operates exclusively as an automated indexing crawler that indexes publicly accessible links from decentralized third-party web services.
+            </p>
+            <p class="disclaimer-highlight">
+              <i class="fa-solid fa-circle-info"></i> Zero video files or copyrighted media are stored, hosted, or uploaded to our internal servers.
+            </p>
+          </div>
+          <div class="footer-trust-strip">
+            <span><i class="fa-solid fa-lock" style="color: #10b981;"></i> 256-Bit SSL</span>
+            <span><i class="fa-solid fa-shield-halved" style="color: #38bdf8;"></i> Safe Browsing</span>
+            <span><i class="fa-solid fa-bolt" style="color: #eab308;"></i> Fast CDN</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom Bar -->
+      <div class="footer-bottom-bar">
+        <div class="footer-bottom-left">
+          <p>&copy; <span id="current-year">2026</span> <strong>ASI OTT</strong>. Engineered with <i class="fa-solid fa-heart" style="color: #e50914;"></i> by ASI Developer Team. All rights reserved.</p>
+        </div>
+        <div class="footer-bottom-right">
+          <button type="button" class="btn-back-to-top" onclick="window.scrollTo({top: 0, behavior: 'smooth'})" title="Back to top">
+            <i class="fa-solid fa-arrow-up"></i> <span>Back to Top</span>
+          </button>
         </div>
       </div>
+
     </div>
   </footer>
 

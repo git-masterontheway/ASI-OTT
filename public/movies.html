@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Movies - Stream & Download HD Movies Online - ASI OTT</title>
+  <meta name="description" content="Explore Bollywood, Hollywood Dual Audio, South Indian Hindi Dubbed, and Korean movies aggregated from top high-speed sources with instant streaming and direct cloud downloads.">
+
+  <!-- Production Canonical & OpenGraph Meta -->
+  <link rel="canonical" href="https://asiott.xo.je/movies.html">
+  <meta property="og:site_name" content="ASI OTT">
+  <meta property="og:title" content="Movies - Stream & Download Bollywood, Hollywood & South Movies">
+  <meta property="og:description" content="Watch online and download full HD movies in 480p, 720p, 1080p, and 4K UHD with zero redirects.">
+  <meta property="og:url" content="https://asiott.xo.je/movies.html">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://asiott.xo.je/favicon.svg">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="/css/style.css?v=2.3.0">
+
+  <style>
+    /* Full-Width Aligned Sub-Header on Movies Page */
+    .movies-sub-header-bar {
+      background: rgba(14, 16, 26, 0.95);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-glass);
+      padding: 0.85rem 1.5rem;
+      position: relative;
+      z-index: 990;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+    }
+    .movies-sub-header-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+      width: 100%;
+    }
+    .movies-search-form {
+      width: 100%;
+      max-width: 100%;
+    }
+    .movies-search-bar {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-full);
+      padding: 0.3rem 0.4rem 0.3rem 1rem;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    .movies-search-bar:focus-within {
+      border-color: var(--accent-primary);
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 0 22px var(--accent-glow);
+    }
+
+    /* Movies Page Title Bar */
+    .movies-header-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1.25rem;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .movies-page-title-box {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .movies-page-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, rgba(229, 9, 20, 0.25) 0%, rgba(229, 9, 20, 0.06) 100%);
+      border: 1px solid rgba(229, 9, 20, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-primary);
+      font-size: 1.45rem;
+      box-shadow: 0 0 20px rgba(229, 9, 20, 0.3);
+      flex-shrink: 0;
+    }
+    .movies-page-title {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.5px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .movies-page-subtitle {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin: 0.25rem 0 0;
+    }
+    .movies-live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #34d399;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-full);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .movies-live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse-dot 2s infinite ease-in-out;
+    }
+
+    /* Movie Section Showcase Styling */
+    .movie-section-container {
+      margin-bottom: 3rem;
+    }
+    .movie-section-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.35rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .movie-section-left {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+    .movie-section-heading {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      margin: 0;
+    }
+    .movie-section-heading i {
+      color: var(--accent-primary);
+    }
+    .movie-section-sub {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin: 0.2rem 0 0;
+    }
+    .movie-explore-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.4rem 1rem;
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-glass);
+      color: #cbd5e1;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      text-decoration: none;
+    }
+    .movie-explore-btn:hover {
+      background: rgba(229, 9, 20, 0.18);
+      border-color: rgba(229, 9, 20, 0.45);
+      color: #fff;
+      transform: translateX(4px);
+    }
+    .movie-badge-pill {
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 0.2rem 0.55rem;
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, 0.08);
+      color: #94a3b8;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. Top Navigation Bar (Identical to Home) -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="brand-wrapper">
+        <a href="/" class="brand-logo" id="home-link">
+          <img src="/logo.png" alt="ASI OTT" class="navbar-brand-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex'">
+          <span style="display: none;"><i class="fa-solid fa-play-circle brand-highlight"></i> ASI<span class="brand-highlight">OTT</span></span>
+        </a>
+      </div>
+
+      <!-- Main Navigation: Home, MOVIES (Active), and Telegram Icon -->
+      <nav class="nav-actions">
+        <a href="/" class="nav-link" title="Home"><i class="fa-solid fa-house"></i> <span>Home</span></a>
+        <a href="/movies.html" class="nav-link active" title="Movies"><i class="fa-solid fa-film"></i> <span>MOVIES</span></a>
+        <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="nav-link nav-telegram-icon" title="Telegram Discussion">
+          <i class="fa-brands fa-telegram"></i>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- 2. Dedicated Sub-Header: Full-Width Search & Category Tabs -->
+  <section class="movies-sub-header-bar">
+    <div class="movies-sub-header-container">
+      
+      <!-- Row 1: Full-Width Unified Search Bar -->
+      <form class="movies-search-form" id="search-form" onsubmit="return false;">
+        <div class="movies-search-bar">
+          <!-- Category Filter Dropdown with Movie Genres -->
+          <div class="search-category-dropdown" id="search-category-dropdown">
+            <i class="fa-solid fa-film dropdown-filter-icon"></i>
+            <select id="search-category-select" class="search-category-select" aria-label="Select Movie Category">
+              <option value="all">All Movies</option>
+              <option value="new_releases">New Releases</option>
+              <option value="bollywood">Bollywood (Hindi)</option>
+              <option value="hollywood">Hollywood (Dual Audio)</option>
+              <option value="south_movies">South Movies (Dubbed)</option>
+              <option value="korean_movies">Korean & Asian</option>
+              <option value="web_series">Web Series</option>
+            </select>
+            <i class="fa-solid fa-chevron-down dropdown-arrow-icon"></i>
+          </div>
+
+          <div class="search-bar-divider"></div>
+
+          <!-- Search Input Field -->
+          <div class="search-input-group">
+            <i class="fa-solid fa-magnifying-glass search-input-icon"></i>
+            <input 
+              type="text" 
+              id="search-input" 
+              class="search-input-field" 
+              placeholder="Search movies by title, actor, or genre..." 
+              autocomplete="off"
+            >
+            <button type="button" id="search-clear-btn" class="search-clear-btn" title="Clear search" style="display: none;">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <button type="submit" id="search-submit-btn" class="btn btn-search-submit" title="Search Movies">
+            <i class="fa-solid fa-magnifying-glass"></i> <span>Search</span>
+          </button>
+        </div>
+      </form>
+
+      <!-- Row 2: Naturally Swipeable Movie Category Menu -->
+      <div class="category-tabs-wrapper" id="category-tabs">
+        <button class="cat-tab active" data-category="all">
+          <i class="fa-solid fa-border-all"></i> All Movies
+        </button>
+        <button class="cat-tab" data-category="new_releases">
+          <i class="fa-solid fa-bolt"></i> New Releases
+        </button>
+        <button class="cat-tab" data-category="bollywood">
+          <i class="fa-solid fa-clapperboard"></i> Bollywood
+        </button>
+        <button class="cat-tab" data-category="hollywood">
+          <i class="fa-solid fa-film"></i> Hollywood
+        </button>
+        <button class="cat-tab" data-category="south_movies">
+          <i class="fa-solid fa-fire-flame-curved"></i> South Movies
+        </button>
+        <button class="cat-tab" data-category="korean_movies">
+          <i class="fa-solid fa-masks-theater"></i> Korean Movies
+        </button>
+        <button class="cat-tab" data-category="web_series">
+          <i class="fa-solid fa-layer-group"></i> Web Series
+        </button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- 3. Main Content Container (Pixel-Perfect Alignment with Header & Footer) -->
+  <main class="main-wrapper" id="main-content-wrapper">
+
+    <!-- Movies Page Title Bar (INSIDE Main Wrapper, NO Hero Spotlight Section) -->
+    <div class="movies-header-banner">
+      <div class="movies-page-title-box">
+        <div class="movies-page-icon">
+          <i class="fa-solid fa-film"></i>
+        </div>
+        <div>
+          <h1 class="movies-page-title" id="page-main-title">
+            <span>Movies Hub</span>
+            <span class="movies-live-badge"><span class="movies-live-dot"></span> 4K / FHD Online</span>
+          </h1>
+          <p class="movies-page-subtitle" id="page-main-subtitle">
+            Bollywood, Hollywood Dual Audio, South Indian Hindi Dubbed & Korean Cinema
+          </p>
+        </div>
+      </div>
+      <div class="filter-chips" id="quick-filter-chips">
+        <button class="chip active" data-filter="all">All Releases</button>
+        <button class="chip" data-filter="popular">Most Viewed</button>
+        <button class="chip" data-filter="recent">Recent Additions</button>
+      </div>
+    </div>
+
+    <!-- Container for Multi-Section Showcase (When viewing "All Movies") -->
+    <div id="movies-sections-container">
+      <div class="grid-logo-loader-container">
+        <div class="grid-logo-loader">
+          <div class="gll-logo-wrapper">
+            <div class="gll-glow-halo"></div>
+            <img src="/logo.png" alt="Loading" class="gll-logo-img">
+          </div>
+          <div class="gll-bar-track">
+            <div class="gll-bar-fill"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Container for Single Category Grid / Search Results (When specific category tab clicked or searching) -->
+    <div id="movies-single-view" style="display: none;">
+      <section class="section-header" style="margin-top: 0.5rem;">
+        <div class="section-title-wrapper">
+          <h2 class="section-title" id="single-view-heading">
+            <i class="fa-solid fa-film"></i> ALL MOVIES
+          </h2>
+          <span class="items-counter" id="items-counter" style="display: none;"></span>
+        </div>
+      </section>
+
+      <div class="series-grid" id="movies-grid">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <!-- Pagination Wrapper -->
+      <div class="pagination-wrapper" id="pagination-wrapper" style="display: none;">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Premium Modern OTT Site Footer -->
+  <footer class="site-footer">
+    <div class="footer-container">
+      
+      <!-- Top CTA Banner: Community & Instant Updates -->
+      <div class="footer-cta-banner">
+        <div class="footer-cta-content">
+          <div class="footer-cta-icon">
+            <i class="fa-brands fa-telegram"></i>
+          </div>
+          <div class="footer-cta-text">
+            <h3>Join Our Official Telegram Community</h3>
+            <p>Get instant updates for new Bollywood, Hollywood Dual Audio, South & 4K OTT releases, direct download links & movie requests.</p>
+          </div>
+        </div>
+        <div class="footer-cta-actions">
+          <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="btn-footer-tg">
+            <i class="fa-brands fa-telegram"></i> <span>Join Discussion</span>
+            <i class="fa-solid fa-arrow-up-right-from-square"></i>
+          </a>
+        </div>
+      </div>
+
+      <!-- Quick Genre Pills Bar -->
+      <div class="footer-genre-pills">
+        <span class="footer-pills-label"><i class="fa-solid fa-fire"></i> Quick Browse:</span>
+        <div class="footer-pills-list">
+          <a href="/movies.html?genre=bollywood" class="footer-pill">Bollywood Cinema</a>
+          <a href="/movies.html?genre=hollywood" class="footer-pill">Hollywood (Dual Audio)</a>
+          <a href="/movies.html?genre=south_movies" class="footer-pill">South Hindi Dubbed</a>
+          <a href="/movies.html?genre=korean_movies" class="footer-pill">Korean & Asian</a>
+          <a href="/movies.html?genre=web_series" class="footer-pill">Web Series</a>
+          <a href="/movies.html" class="footer-pill">4K UHD Movies</a>
+        </div>
+      </div>
+
+      <div class="footer-divider"></div>
+
+      <!-- Main 4-Column Grid -->
+      <div class="footer-grid-columns">
+        
+        <!-- Column 1: Brand & Status -->
+        <div class="footer-col footer-col-brand">
+          <a href="/" class="footer-brand-logo">
+            <img src="/logo.png" alt="ASI OTT" class="footer-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex'">
+            <span style="display: none;"><i class="fa-solid fa-play-circle brand-highlight"></i> ASI<span class="brand-highlight">OTT</span></span>
+          </a>
+          <p class="footer-desc">
+            ASI OTT is a premier multi-source entertainment platform engineered for seamless 4K UHD streaming, multi-audio cinema, and verified instant direct cloud downloads without popups or third-party redirects.
+          </p>
+          <div class="footer-system-status">
+            <div class="status-item">
+              <span class="status-pulse-dot"></span>
+              <span class="status-label">CDN Edge Network: <strong>Online (99.9%)</strong></span>
+            </div>
+            <div class="status-item">
+              <i class="fa-solid fa-shield-halved" style="color: #34d399;"></i>
+              <span class="status-label">Ad Shield: <strong>Zero Redirects</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Column 2: Explore Content -->
+        <div class="footer-col">
+          <h4 class="footer-col-title"><i class="fa-solid fa-compass"></i> Explore Content</h4>
+          <ul class="footer-links-list">
+            <li><a href="/"><i class="fa-solid fa-house"></i> Home All Streaming</a></li>
+            <li><a href="/movies.html"><i class="fa-solid fa-film"></i> Movies Central</a></li>
+            <li><a href="/movies.html?genre=bollywood"><i class="fa-solid fa-clapperboard"></i> Bollywood Cinema</a></li>
+            <li><a href="/movies.html?genre=hollywood"><i class="fa-solid fa-video"></i> Hollywood (Dual Audio)</a></li>
+            <li><a href="/movies.html?genre=south_movies"><i class="fa-solid fa-fire-flame-curved"></i> South Hindi Dubbed</a></li>
+            <li><a href="/movies.html?genre=korean_movies"><i class="fa-solid fa-masks-theater"></i> Korean & Asian Movies</a></li>
+            <li><a href="/movies.html?genre=web_series"><i class="fa-solid fa-layer-group"></i> Web Series Archive</a></li>
+          </ul>
+        </div>
+
+        <!-- Column 3: Streaming Tech & Experience -->
+        <div class="footer-col">
+          <h4 class="footer-col-title"><i class="fa-solid fa-bolt"></i> Streaming Experience</h4>
+          <ul class="footer-links-list">
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #38bdf8;"></i> 480p, 720p, 1080p & 4K UHD</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #eab308;"></i> 10m Lookahead Pre-Buffering</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #34d399;"></i> 300% Web Audio Booster</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #a855f7;"></i> Cinema 16:9 & Mobile 9:16</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #f43f5e;"></i> Direct Fast Cloud Downloads</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #06b6d4;"></i> Keyboard Shortcuts (Space/Arrows)</span></li>
+          </ul>
+        </div>
+
+        <!-- Column 4: DMCA & Transparency Card -->
+        <div class="footer-col footer-col-disclaimer">
+          <h4 class="footer-col-title"><i class="fa-solid fa-scale-balanced"></i> Transparency & DMCA</h4>
+          <div class="footer-disclaimer-box">
+            <p>
+              ASI OTT operates exclusively as an automated indexing crawler that indexes publicly accessible links from decentralized third-party web services.
+            </p>
+            <p class="disclaimer-highlight">
+              <i class="fa-solid fa-circle-info"></i> Zero video files or copyrighted media are stored, hosted, or uploaded to our internal servers.
+            </p>
+          </div>
+          <div class="footer-trust-strip">
+            <span><i class="fa-solid fa-lock" style="color: #10b981;"></i> 256-Bit SSL</span>
+            <span><i class="fa-solid fa-shield-halved" style="color: #38bdf8;"></i> Safe Browsing</span>
+            <span><i class="fa-solid fa-bolt" style="color: #eab308;"></i> Fast CDN</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom Bar -->
+      <div class="footer-bottom-bar">
+        <div class="footer-bottom-left">
+          <p>&copy; <span id="current-year">2026</span> <strong>ASI OTT</strong>. Engineered with <i class="fa-solid fa-heart" style="color: #e50914;"></i> by ASI Developer Team. All rights reserved.</p>
+        </div>
+        <div class="footer-bottom-right">
+          <button type="button" class="btn-back-to-top" onclick="window.scrollTo({top: 0, behavior: 'smooth'})" title="Back to top">
+            <i class="fa-solid fa-arrow-up"></i> <span>Back to Top</span>
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </footer>
+
+  <!-- Movies Logic Script -->
+  <script src="/js/movies.js?v=2.3.0"></script>
+</body>
+</html>

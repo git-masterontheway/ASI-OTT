@@ -249,7 +249,7 @@ function renderSeriesGrid(items) {
   seriesGrid.innerHTML = items.map(item => {
     const watchUrl = `/watch.html?id=${encodeURIComponent(item.id || item.slug)}&source=${encodeURIComponent(item.source || 'MicroTV')}`;
     const safeTitle = (item.title || '').replace(/"/g, '&quot;');
-    const thumbUrl = item.thumbnail || 'https://new.microtv.st/assets/images/placeholder.jpg';
+    const thumbUrl = item.thumbnail || 'https://m.microtv.st/assets/images/placeholder.jpg';
     const qualityTag = item.quality || 'HD Stream';
     
     // SOURCE MASKING: Dynamically map to casual category tags without revealing original source names
@@ -271,7 +271,7 @@ function renderSeriesGrid(items) {
             alt="${safeTitle}" 
             class="series-poster"
             loading="lazy"
-            onerror="this.onerror=null; this.src='https://new.microtv.st/assets/images/placeholder.jpg'"
+            onerror="this.onerror=null; this.src='https://m.microtv.st/assets/images/placeholder.jpg'"
           >
           <div class="poster-gradient"></div>
           

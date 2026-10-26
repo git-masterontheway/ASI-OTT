@@ -31,7 +31,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
   <!-- Main Stylesheet -->
-  <link rel="stylesheet" href="/css/style.css?v=2.2.0">
+  <link rel="stylesheet" href="/css/style.css?v=2.3.0">
 </head>
 <body>
 
@@ -69,10 +69,10 @@
         </a>
       </div>
 
-      <!-- Main Navigation: Home, Trending, and Telegram Icon Only -->
+      <!-- Main Navigation: Home, MOVIES, and Telegram Icon Only -->
       <nav class="nav-actions">
         <a href="/" class="nav-link active" title="Home"><i class="fa-solid fa-house"></i> <span>Home</span></a>
-        <a href="#series-section" class="nav-link" title="Trending"><i class="fa-solid fa-fire"></i> <span>Trending</span></a>
+        <a href="/movies.html" class="nav-link" title="Movies"><i class="fa-solid fa-film"></i> <span>MOVIES</span></a>
         <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="nav-link nav-telegram-icon" title="Telegram Discussion">
           <i class="fa-brands fa-telegram"></i>
         </a>
@@ -208,39 +208,127 @@
 
   </main>
 
-  <!-- Consistent Site Footer with Dynamic Year & Developer Credit -->
+  <!-- Premium Modern OTT Site Footer -->
   <footer class="site-footer">
     <div class="footer-container">
-      <div class="footer-top-row">
-        <div class="footer-brand">
-          <div class="brand-logo">
-            <i class="fa-solid fa-play-circle brand-highlight"></i>
-            <span>ASI<span class="brand-highlight">OTT</span></span>
+      
+      <!-- Top CTA Banner: Community & Instant Updates -->
+      <div class="footer-cta-banner">
+        <div class="footer-cta-content">
+          <div class="footer-cta-icon">
+            <i class="fa-brands fa-telegram"></i>
           </div>
-          <p class="footer-desc">
-            ASI OTT is an advanced multi-source content aggregation platform delivering high-definition movies, web series, and vertical short dramas with horizontal video playback and seamless direct cloud downloads.
-          </p>
+          <div class="footer-cta-text">
+            <h3>Join Our Official Telegram Community</h3>
+            <p>Get instant updates for new Bollywood, Hollywood Dual Audio, South & 4K OTT releases, direct download links & movie requests.</p>
+          </div>
         </div>
-
-        <div class="footer-nav-links">
-          <a href="/" class="footer-link"><i class="fa-solid fa-house"></i> Home</a>
-          <a href="#series-section" class="footer-link"><i class="fa-solid fa-fire"></i> Trending</a>
-          <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="footer-link footer-telegram">
-            <i class="fa-brands fa-telegram"></i> Telegram Discussion
+        <div class="footer-cta-actions">
+          <a href="https://t.me/ASI_OTT_discussion" target="_blank" rel="noopener noreferrer" class="btn-footer-tg">
+            <i class="fa-brands fa-telegram"></i> <span>Join Discussion</span>
+            <i class="fa-solid fa-arrow-up-right-from-square"></i>
           </a>
+        </div>
+      </div>
+
+      <!-- Quick Genre Pills Bar -->
+      <div class="footer-genre-pills">
+        <span class="footer-pills-label"><i class="fa-solid fa-fire"></i> Quick Browse:</span>
+        <div class="footer-pills-list">
+          <a href="/movies.html?genre=bollywood" class="footer-pill">Bollywood Cinema</a>
+          <a href="/movies.html?genre=hollywood" class="footer-pill">Hollywood (Dual Audio)</a>
+          <a href="/movies.html?genre=south_movies" class="footer-pill">South Hindi Dubbed</a>
+          <a href="/movies.html?genre=korean_movies" class="footer-pill">Korean & Asian</a>
+          <a href="/movies.html?genre=web_series" class="footer-pill">Web Series</a>
+          <a href="/movies.html" class="footer-pill">4K UHD Movies</a>
         </div>
       </div>
 
       <div class="footer-divider"></div>
 
-      <div class="footer-bottom-row">
-        <div class="footer-copyright">
-          Copyright <span id="current-year"></span> ASI OTT. Built by ASI Developer Team.
+      <!-- Main 4-Column Grid -->
+      <div class="footer-grid-columns">
+        
+        <!-- Column 1: Brand & Status -->
+        <div class="footer-col footer-col-brand">
+          <a href="/" class="footer-brand-logo">
+            <img src="/logo.png" alt="ASI OTT" class="footer-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-flex'">
+            <span style="display: none;"><i class="fa-solid fa-play-circle brand-highlight"></i> ASI<span class="brand-highlight">OTT</span></span>
+          </a>
+          <p class="footer-desc">
+            ASI OTT is a premier multi-source entertainment platform engineered for seamless 4K UHD streaming, multi-audio cinema, and verified instant direct cloud downloads without popups or third-party redirects.
+          </p>
+          <div class="footer-system-status">
+            <div class="status-item">
+              <span class="status-pulse-dot"></span>
+              <span class="status-label">CDN Edge Network: <strong>Online (99.9%)</strong></span>
+            </div>
+            <div class="status-item">
+              <i class="fa-solid fa-shield-halved" style="color: #34d399;"></i>
+              <span class="status-label">Ad Shield: <strong>Zero Redirects</strong></span>
+            </div>
+          </div>
         </div>
-        <div class="footer-developer">
-          <i class="fa-solid fa-shield-halved"></i> Internal Testing Environment • Authorized Platform
+
+        <!-- Column 2: Explore Content -->
+        <div class="footer-col">
+          <h4 class="footer-col-title"><i class="fa-solid fa-compass"></i> Explore Content</h4>
+          <ul class="footer-links-list">
+            <li><a href="/"><i class="fa-solid fa-house"></i> Home All Streaming</a></li>
+            <li><a href="/movies.html"><i class="fa-solid fa-film"></i> Movies Central</a></li>
+            <li><a href="/movies.html?genre=bollywood"><i class="fa-solid fa-clapperboard"></i> Bollywood Cinema</a></li>
+            <li><a href="/movies.html?genre=hollywood"><i class="fa-solid fa-video"></i> Hollywood (Dual Audio)</a></li>
+            <li><a href="/movies.html?genre=south_movies"><i class="fa-solid fa-fire-flame-curved"></i> South Hindi Dubbed</a></li>
+            <li><a href="/movies.html?genre=korean_movies"><i class="fa-solid fa-masks-theater"></i> Korean & Asian Movies</a></li>
+            <li><a href="/movies.html?genre=web_series"><i class="fa-solid fa-layer-group"></i> Web Series Archive</a></li>
+          </ul>
+        </div>
+
+        <!-- Column 3: Streaming Tech & Experience -->
+        <div class="footer-col">
+          <h4 class="footer-col-title"><i class="fa-solid fa-bolt"></i> Streaming Experience</h4>
+          <ul class="footer-links-list">
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #38bdf8;"></i> 480p, 720p, 1080p & 4K UHD</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #eab308;"></i> 10m Lookahead Pre-Buffering</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #34d399;"></i> 300% Web Audio Booster</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #a855f7;"></i> Cinema 16:9 & Mobile 9:16</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #f43f5e;"></i> Direct Fast Cloud Downloads</span></li>
+            <li><span class="footer-feature-item"><i class="fa-solid fa-circle-check" style="color: #06b6d4;"></i> Keyboard Shortcuts (Space/Arrows)</span></li>
+          </ul>
+        </div>
+
+        <!-- Column 4: DMCA & Transparency Card -->
+        <div class="footer-col footer-col-disclaimer">
+          <h4 class="footer-col-title"><i class="fa-solid fa-scale-balanced"></i> Transparency & DMCA</h4>
+          <div class="footer-disclaimer-box">
+            <p>
+              ASI OTT operates exclusively as an automated indexing crawler that indexes publicly accessible links from decentralized third-party web services.
+            </p>
+            <p class="disclaimer-highlight">
+              <i class="fa-solid fa-circle-info"></i> Zero video files or copyrighted media are stored, hosted, or uploaded to our internal servers.
+            </p>
+          </div>
+          <div class="footer-trust-strip">
+            <span><i class="fa-solid fa-lock" style="color: #10b981;"></i> 256-Bit SSL</span>
+            <span><i class="fa-solid fa-shield-halved" style="color: #38bdf8;"></i> Safe Browsing</span>
+            <span><i class="fa-solid fa-bolt" style="color: #eab308;"></i> Fast CDN</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom Bar -->
+      <div class="footer-bottom-bar">
+        <div class="footer-bottom-left">
+          <p>&copy; <span id="current-year">2026</span> <strong>ASI OTT</strong>. Engineered with <i class="fa-solid fa-heart" style="color: #e50914;"></i> by ASI Developer Team. All rights reserved.</p>
+        </div>
+        <div class="footer-bottom-right">
+          <button type="button" class="btn-back-to-top" onclick="window.scrollTo({top: 0, behavior: 'smooth'})" title="Back to top">
+            <i class="fa-solid fa-arrow-up"></i> <span>Back to Top</span>
+          </button>
         </div>
       </div>
+
     </div>
   </footer>
 
