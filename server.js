@@ -945,17 +945,22 @@ function formatViewCount(rawViews) {
 // ---------------------------------------------------------------------------
 
 const MICROTV_CACHE = new Map();
-const MICROTV_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const MICROTV_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes standard cache
 
 /**
  * Dynamic live fetcher for m.microtv.st with anti-blocking Jina AI reader and multi-proxy failover.
- * Ensures Mini Drama works seamlessly even on cloud hosting IPs (e.g. Vercel) where Cloudflare challenges appear.
+ * Ensures Mini Drama works seamlessly even on cloud hosting IPs (e.g. Render/Vercel) where Cloudflare challenges appear.
  */
-async function fetchMicroTvHtml(targetUrl) {
+async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
   if (!targetUrl) return null;
-  const cached = MICROTV_CACHE.get(targetUrl);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
+  const isPage1 = !targetUrl.includes('page=') || targetUrl.includes('page=1');
+  const cacheTtl = isPage1 ? (45 * 1000) : MICROTV_CACHE_TTL_MS; // 45 seconds for page 1 so new uploads appear immediately!
+
+  if (!forceRefresh) {
+    const cached = MICROTV_CACHE.get(targetUrl);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
   }
 
   // Strategy 1: Direct fetch (Super fast 200ms response for local & non-challenged requests)
@@ -974,7 +979,7 @@ async function fetchMicroTvHtml(targetUrl) {
     if (res.ok) {
       const text = await res.text();
       if (!text.includes('Just a moment...') && !text.includes('Checking your browser') && text.length > 500) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + MICROTV_CACHE_TTL_MS });
+        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
         return text;
       }
     }
@@ -982,11 +987,11 @@ async function fetchMicroTvHtml(targetUrl) {
     console.warn('MicroTV direct fetch error, falling back to readers:', e.message);
   }
 
-  // Strategy 2: Jina AI cloud reader (Cleanly extracts full HTML bypassing Cloudflare on Vercel)
+  // Strategy 2: Jina AI cloud reader (Cleanly extracts full HTML bypassing Cloudflare on Render/Vercel)
   try {
     const jinaUrl = `https://r.jina.ai/${targetUrl}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout for reliable completion
     const jRes = await fetch(jinaUrl, {
       headers: {
         'X-Return-Format': 'html',
@@ -998,7 +1003,7 @@ async function fetchMicroTvHtml(targetUrl) {
     if (jRes.ok) {
       const html = await jRes.text();
       if (html.length > 500 && !html.includes('Just a moment...') && (html.includes('post-card') || html.includes('embed-player') || html.includes('download.php') || html.includes('featured-poster'))) {
-        MICROTV_CACHE.set(targetUrl, { data: html, expiresAt: Date.now() + MICROTV_CACHE_TTL_MS });
+        MICROTV_CACHE.set(targetUrl, { data: html, expiresAt: Date.now() + cacheTtl });
         return html;
       }
     }
@@ -1010,13 +1015,13 @@ async function fetchMicroTvHtml(targetUrl) {
   try {
     const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 6000);
     const pRes = await fetch(proxyUrl, { signal: controller.signal });
     clearTimeout(timeout);
     if (pRes.ok) {
       const text = await pRes.text();
       if (text.length > 500 && !text.includes('Just a moment...')) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + MICROTV_CACHE_TTL_MS });
+        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + cacheTtl });
         return text;
       }
     }
@@ -1280,6 +1285,55 @@ async function fetchToonworldSearch(query) {
   return [];
 }
 
+const ANILIST_CACHE = new Map();
+
+/**
+ * Resolves AniList Media ID from anime title for embedded player streaming
+ */
+async function getAniListIdForTitle(title) {
+  if (!title) return null;
+  const cleanSearch = title
+    .replace(/\b(?:season\s*\d+|s\d+|bluray|multi\s*audio|dual\s*audio|hindi|eng|jap|tamil|telugu|mal|ben|480p|720p|1080p|hd|web-dl|hevc|esub|muse\s*dub|episodes?|part\s*\d+|10bit|remastered)\b/gi, '')
+    .replace(/[\[\]\(\)\|\-–—_,]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanSearch) return null;
+  if (ANILIST_CACHE.has(cleanSearch)) return ANILIST_CACHE.get(cleanSearch);
+
+  try {
+    const query = `
+      query ($search: String) {
+        Media (search: $search, type: ANIME) {
+          id
+          title {
+            english
+            romaji
+          }
+          episodes
+        }
+      }
+    `;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ query, variables: { search: cleanSearch } }),
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const aniId = data?.data?.Media?.id || null;
+      if (aniId) {
+        ANILIST_CACHE.set(cleanSearch, aniId);
+        return aniId;
+      }
+    }
+  } catch (err) {
+    console.warn('[AniList] Search error for', cleanSearch, err.message);
+  }
+  return null;
+}
+
 async function resolveToonworldRedirect(redirectPath, referer) {
   if (!redirectPath) return null;
   const fullUrl = redirectPath.startsWith('http') ? redirectPath : `${ARCHIVE_TOONWORLD_BASE}${redirectPath}`;
@@ -1296,23 +1350,21 @@ async function resolveToonworldRedirect(redirectPath, referer) {
       signal: controller.signal
     });
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    if (!res.ok) return fullUrl;
 
     const html = await res.text();
     const match = html.match(/window\.__PROPS__\s*=\s*({[\s\S]*?});/);
     if (match) {
       const props = JSON.parse(match[1]);
-      const { domain, hidden } = props.link || {};
-      if (domain && hidden) {
-        const resolved = `${domain}${hidden}`;
-        RESOLVER_CACHE.set(fullUrl, { data: resolved, expiresAt: Date.now() + RESOLVER_TTL_MS });
-        return resolved;
-      }
+      // Return destination if valid HTTP link, otherwise the official archive redirect portal
+      const dest = (props.destination && props.destination.startsWith('http')) ? props.destination : fullUrl;
+      RESOLVER_CACHE.set(fullUrl, { data: dest, expiresAt: Date.now() + RESOLVER_TTL_MS });
+      return dest;
     }
   } catch (e) {
     console.warn('Toonworld redirect resolve warning:', e.message);
   }
-  return null;
+  return fullUrl;
 }
 
 // ---------------------------------------------------------------------------
@@ -1798,13 +1850,23 @@ app.get('/api/content', async (req, res) => {
       pagination = animeData.pagination;
     } else if (categoryFilter === 'mini_drama' || categoryFilter === 'mini drama' || categoryFilter === 'mini-drama' || categoryFilter === 'dramas') {
       // Dynamic real-time scraping of m.microtv.st for Mini Drama
+      const forceRefresh = req.query.refresh === '1' || req.query.refresh === 'true' || req.query.t != null;
       const microTvUrl = page > 1 ? `${MICROTV_BASE}/?page=${page}` : `${MICROTV_BASE}/`;
-      const html = await fetchMicroTvHtml(microTvUrl);
+      const html = await fetchMicroTvHtml(microTvUrl, forceRefresh);
       if (html) {
         allItems = parseMicroTvCards(html);
         pagination = parsePagination(html, page);
         if (allItems.length > 0) {
           MICROTV_PAGES_CATALOG[String(page)] = allItems;
+          // Dynamically prepend brand new uploads to catalog
+          if (page === 1) {
+            const existingSlugs = new Set(MICROTV_SEED_CATALOG.map(s => s.slug));
+            const newItems = allItems.filter(item => !existingSlugs.has(item.slug));
+            if (newItems.length > 0) {
+              MICROTV_SEED_CATALOG.unshift(...newItems);
+              console.log(`[MicroTV] Successfully detected ${newItems.length} newly uploaded drama(s) from referer!`);
+            }
+          }
         }
       }
 
@@ -2328,17 +2390,20 @@ app.get('/api/post', async (req, res) => {
                   gdflixFile ? resolveToonworldRedirect(gdflixFile.link, activeEpUrl) : null
                 ]);
 
-                const chosenHub = hubcloudUrl || filepressUrl || gdflixUrl || postUrl;
+                const chosenHub = hubcloudUrl || (hubFile ? `${ARCHIVE_TOONWORLD_BASE}${hubFile.link}` : postUrl);
+                const chosenFilepress = filepressUrl || (filepressFile ? `${ARCHIVE_TOONWORLD_BASE}${filepressFile.link}` : null);
+                const chosenGdflix = gdflixUrl || (gdflixFile ? `${ARCHIVE_TOONWORLD_BASE}${gdflixFile.link}` : null);
+
                 qualities.push({
                   quality: q,
                   size: encode.readable?.size || (q === '480p' ? '85 MB' : (q === '720p' ? '180 MB' : '320 MB')),
                   hubUrl: chosenHub,
-                  hubcloudUrl: hubcloudUrl || null,
-                  filepressUrl: filepressUrl || null,
-                  gdflixUrl: gdflixUrl || null,
-                  cloudDirectUrl: hubcloudUrl ? `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubcloudUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=cloud_direct` : (filepressUrl || gdflixUrl),
-                  directDownloadUrl: hubcloudUrl ? `/api/cloud-direct-download?hubUrl=${encodeURIComponent(hubcloudUrl)}&title=${encodeURIComponent(title)}&quality=${q}&type=direct` : (filepressUrl || gdflixUrl),
-                  hdCloudUrl: hubcloudUrl || filepressUrl || gdflixUrl || postUrl
+                  hubcloudUrl: chosenHub,
+                  filepressUrl: chosenFilepress,
+                  gdflixUrl: chosenGdflix,
+                  cloudDirectUrl: chosenHub,
+                  directDownloadUrl: chosenFilepress || chosenHub,
+                  hdCloudUrl: chosenGdflix || chosenHub
                 });
               }
             }
@@ -2360,6 +2425,20 @@ app.get('/api/post', async (req, res) => {
         } catch (hErr) {
           console.warn('[ToonWorld] HubCloud direct stream resolve warning:', hErr.message);
         }
+      }
+
+      // If direct stream/embed from HubCloud is not available, attach AniList embedded anime player
+      const epNum = currentEpisodeIndex + 1;
+      if (!embedUrl) {
+        try {
+          const aniId = await getAniListIdForTitle(title);
+          if (aniId) {
+            embedUrl = `https://justplay.boo/embed/?ani=${aniId}&ep=${epNum}&lang=sub`;
+          }
+        } catch (e) { }
+      }
+      if (!embedUrl) {
+        embedUrl = `https://www.2embed.cc/embedtv/anime?title=${encodeURIComponent(title)}&e=${epNum}`;
       }
 
       // Fallback default qualities if archive link parsing was empty
@@ -3409,8 +3488,13 @@ app.get('/api/clean-embed', async (req, res) => {
     const u = new URL(embedUrl);
     const origin = `${u.protocol}//${u.host}`;
 
-    // For playmate.to or upstream embeds that challenge backend proxies, redirect browser directly
-    if (u.hostname.includes('playmate.to')) {
+    // For playmate.to, justplay.boo, 2embed, vidlink or upstream embeds that challenge backend proxies, redirect browser directly
+    if (
+      u.hostname.includes('playmate.to') ||
+      u.hostname.includes('justplay.boo') ||
+      u.hostname.includes('2embed.cc') ||
+      u.hostname.includes('vidlink.pro')
+    ) {
       return res.redirect(302, embedUrl);
     }
 

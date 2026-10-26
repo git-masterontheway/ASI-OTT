@@ -508,7 +508,12 @@ function switchToEmbedPlayer() {
   customVideo.style.display = 'none';
   embedIframe.removeAttribute('sandbox');
   embedIframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
-  if (seriesData.embedUrl.includes('playmate.to')) {
+  if (
+    seriesData.embedUrl.includes('playmate.to') ||
+    seriesData.embedUrl.includes('justplay.boo') ||
+    seriesData.embedUrl.includes('2embed.cc') ||
+    seriesData.embedUrl.includes('vidlink.pro')
+  ) {
     embedIframe.src = seriesData.embedUrl;
   } else {
     embedIframe.src = `${API_BASE}/api/clean-embed?url=${encodeURIComponent(seriesData.embedUrl)}`;
@@ -1553,19 +1558,19 @@ function renderDownloadSection(qualities, title) {
                 ${(t.tier && (t.tier.hubcloudUrl || t.tier.filepressUrl || t.tier.gdflixUrl)) ? `
                   <div class="anime-hosts-btn-group">
                     ${t.tier.hubcloudUrl ? `
-                      <a href="${t.tier.cloudDirectUrl}" class="btn-host-dl btn-host-hubcloud" title="Download via HubCloud (10Gbps CDN)" target="_blank" rel="noopener">
+                      <a href="${t.tier.hubcloudUrl}" class="btn-host-dl btn-host-hubcloud" title="Download via HubCloud (10Gbps CDN)" target="_blank" rel="noopener">
                         <span><i class="fa-solid fa-cloud"></i> HubCloud</span>
                         <span>hubcloud.ist <i class="fa-solid fa-arrow-down"></i></span>
                       </a>
                     ` : ''}
                     ${t.tier.filepressUrl ? `
-                      <a href="${t.tier.directDownloadUrl}" class="btn-host-dl btn-host-filepress" title="Download via Filepress (Fast Mirror)" target="_blank" rel="noopener">
+                      <a href="${t.tier.filepressUrl}" class="btn-host-dl btn-host-filepress" title="Download via Filepress (Fast Mirror)" target="_blank" rel="noopener">
                         <span><i class="fa-solid fa-server"></i> Filepress</span>
                         <span>new2.filepress.lat <i class="fa-solid fa-arrow-down"></i></span>
                       </a>
                     ` : ''}
                     ${t.tier.gdflixUrl ? `
-                      <a href="${t.tier.hdCloudUrl}" class="btn-host-dl btn-host-gdflix" title="Download via GDFlix (Google Drive CDN)" target="_blank" rel="noopener">
+                      <a href="${t.tier.gdflixUrl}" class="btn-host-dl btn-host-gdflix" title="Download via GDFlix (Google Drive CDN)" target="_blank" rel="noopener">
                         <span><i class="fa-brands fa-google-drive"></i> GDFlix</span>
                         <span>gdflix.dev <i class="fa-solid fa-arrow-down"></i></span>
                       </a>
@@ -1618,16 +1623,18 @@ function renderEpisodesSection(episodes, currentEp) {
   if (countBadge) countBadge.textContent = `${episodes.length} Episodes Available`;
 
   grid.innerHTML = episodes.map((ep, idx) => {
-    const isActive = ep.slug === currentEp || (!currentEp && idx === 0);
+    const isActive = (currentEp != null && (ep.episodeNumber === currentEp || idx + 1 === currentEp)) || (!currentEp && idx === 0);
+    const epUrl = encodeURIComponent(ep.url || '');
     return `
       <button 
         type="button"
         class="episode-btn ${isActive ? 'active' : ''}" 
-        data-ep-slug="${ep.slug}"
-        onclick="switchAnimeEpisode('${ep.slug}')"
+        data-ep-url="${ep.url || ''}"
+        data-ep-num="${ep.episodeNumber || (idx + 1)}"
+        onclick="switchAnimeEpisode('${ep.url || ''}', ${ep.episodeNumber || (idx + 1)})"
       >
         <i class="fa-solid fa-play" style="font-size: 0.7rem;"></i>
-        <span>${ep.label || `Episode ${idx + 1}`}</span>
+        <span>${ep.title || ep.label || `Ep ${ep.episodeNumber || (idx + 1)}`}</span>
       </button>
     `;
   }).join('');
@@ -1636,15 +1643,17 @@ function renderEpisodesSection(episodes, currentEp) {
 /**
  * Dynamically switch between Anime episodes
  */
-async function switchAnimeEpisode(epSlug) {
+async function switchAnimeEpisode(epUrl, epNum) {
   if (!seriesData) return;
-  const url = new URL(window.location.href);
-  url.searchParams.set('episode', epSlug);
-  window.history.replaceState({}, '', url.toString());
+  const pageUrl = new URL(window.location.href);
+  if (epUrl) pageUrl.searchParams.set('episodeUrl', epUrl);
+  if (epNum) pageUrl.searchParams.set('ep', epNum);
+  window.history.replaceState({}, '', pageUrl.toString());
 
-  showPlayerVideoLoading('Switching Episode...', `Loading ${epSlug}`);
+  showPlayerVideoLoading('Switching Episode...', `Loading Episode ${epNum || ''}`);
   try {
-    const query = `/api/post?id=${encodeURIComponent(seriesData.slug || seriesData.id)}&source=ToonWorld4All&episode=${encodeURIComponent(epSlug)}`;
+    const contentId = seriesData.slug || seriesData.id || '';
+    const query = `/api/post?id=${encodeURIComponent(contentId)}&source=ToonWorld4All&episodeUrl=${encodeURIComponent(epUrl || '')}`;
     const res = await fetch(query);
     const data = await res.json();
     if (data.success) {
@@ -1652,26 +1661,30 @@ async function switchAnimeEpisode(epSlug) {
       seriesFullTitle.textContent = data.title || 'Anime Episode';
       if (overlayTitle) overlayTitle.textContent = data.title || 'Anime Episode';
 
-      // Update episode buttons
+      // Update episode buttons active state
       document.querySelectorAll('.episode-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.epSlug === epSlug);
+        btn.classList.toggle('active', btn.dataset.epUrl === epUrl || (epNum && btn.dataset.epNum == epNum));
       });
 
-      // Update downloads
+      // Update downloads for new episode
       renderDownloadSection(data.qualities, data.title);
 
-      // Play video
+      // Play video: try direct stream -> embed -> toast
       if (data.directStreamUrl) {
         setupDirectStreamPlayback(true);
       } else if (data.embedUrl) {
         switchToEmbedPlayer();
       } else {
         hidePlayerVideoLoading();
-        showToast('Stream ready. Choose a download tier below to watch instantly.', 'info');
+        showToast('Episode ready. Use the download buttons below.', 'info');
       }
+    } else {
+      hidePlayerVideoLoading();
+      showToast('Failed to load episode details.', 'error');
     }
   } catch (e) {
     console.error('Episode switch error:', e);
+    hidePlayerVideoLoading();
     showToast('Failed to switch episode: ' + e.message, 'error');
   }
 }
