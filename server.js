@@ -1053,12 +1053,12 @@ function parseMicroTvCards(html) {
 
   // 2. If no cards found from HTML, parse from Markdown format (from Cloudflare edge reader on Render)
   if (cards.length === 0) {
-    const mdRegex = /\[\s*(?:!\[([^\]]*)\]\(([^)]+)\))?\s*([\s\S]*?)\s*(?:👁️\s*([0-9,]+)\s*views)?\s*\]\((?:https?:\/\/[^\/]+)?\/post\/([a-zA-Z0-9_-]+)\)/gi;
+    const mdRegex = /\[\s*!\[([^\]]*)\]\(([^)]+)\)\s*([^👁️\n\[\]]+?)\s*(?:👁️\s*([0-9,]+)\s*views)?\s*\]\((?:https?:\/\/[^\/]+)?\/post\/([a-zA-Z0-9_-]+)\)/gi;
     let mdMatch;
     while ((mdMatch = mdRegex.exec(html)) !== null) {
       const altTitle = mdMatch[1];
       const thumbnail = mdMatch[2] || '';
-      let textTitle = mdMatch[3] ? mdMatch[3].replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim() : '';
+      let textTitle = mdMatch[3] ? mdMatch[3].trim() : '';
       const rawViews = mdMatch[4] || '1800';
       const slug = mdMatch[5];
       let title = cleanTitle(altTitle || textTitle || slug);
