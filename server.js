@@ -918,11 +918,35 @@ async function fetchMicroTvHtml(targetUrl) {
     return cached.data;
   }
 
-  // Strategy 1: Jina AI cloud reader (Cleanly extracts full HTML bypassing Cloudflare on Vercel)
+  // Strategy 1: Direct fetch (Super fast 200ms response for local & non-challenged requests)
+  try {
+    const activeMicro = await getActiveMicroTvBase();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch(targetUrl, {
+      headers: {
+        ...COMMON_HEADERS,
+        'Referer': `${activeMicro}/`
+      },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const text = await res.text();
+      if (!text.includes('Just a moment...') && !text.includes('Checking your browser') && text.length > 500) {
+        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + MICROTV_CACHE_TTL_MS });
+        return text;
+      }
+    }
+  } catch (e) {
+    console.warn('MicroTV direct fetch error, falling back to readers:', e.message);
+  }
+
+  // Strategy 2: Jina AI cloud reader (Cleanly extracts full HTML bypassing Cloudflare on Vercel)
   try {
     const jinaUrl = `https://r.jina.ai/${targetUrl}`;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6500);
+    const timeout = setTimeout(() => controller.abort(), 6000);
     const jRes = await fetch(jinaUrl, {
       headers: {
         'X-Return-Format': 'html',
@@ -940,30 +964,6 @@ async function fetchMicroTvHtml(targetUrl) {
     }
   } catch (e) {
     console.warn('MicroTV Jina fetch warning:', e.message);
-  }
-
-  // Strategy 2: Direct fetch (for local development or if Cloudflare allows IP)
-  try {
-    const activeMicro = await getActiveMicroTvBase();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
-    const res = await fetch(targetUrl, {
-      headers: {
-        ...COMMON_HEADERS,
-        'Referer': `${activeMicro}/`
-      },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (res.ok) {
-      const text = await res.text();
-      if (!text.includes('Just a moment...') && !text.includes('Checking your browser') && text.length > 500) {
-        MICROTV_CACHE.set(targetUrl, { data: text, expiresAt: Date.now() + MICROTV_CACHE_TTL_MS });
-        return text;
-      }
-    }
-  } catch (e) {
-    console.warn('MicroTV direct fetch error:', e.message);
   }
 
   // Strategy 3: allorigins fallback bridge
@@ -2791,11 +2791,12 @@ app.get('/api/stream-video', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
     res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Disposition', 'inline');
 
     let hasContentType = false;
     for (const [key, value] of videoRes.headers.entries()) {
       const lower = key.toLowerCase();
-      if (['content-range', 'content-length', 'accept-ranges', 'content-disposition'].includes(lower)) {
+      if (['content-range', 'content-length', 'accept-ranges'].includes(lower)) {
         res.setHeader(key, value);
       } else if (lower === 'content-type') {
         hasContentType = true;
@@ -2841,16 +2842,33 @@ app.get('/api/clean-embed', async (req, res) => {
     const u = new URL(embedUrl);
     const origin = `${u.protocol}//${u.host}`;
 
-    const fetchRes = await fetch(embedUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Referer': `${origin}/`,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      }
-    });
+    // For playmate.to or upstream embeds that challenge backend proxies, redirect browser directly
+    if (u.hostname.includes('playmate.to')) {
+      return res.redirect(302, embedUrl);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3500);
+
+    let fetchRes;
+    try {
+      fetchRes = await fetch(embedUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Referer': `${origin}/`,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+    } catch (fetchErr) {
+      clearTimeout(timeout);
+      console.warn(`Upstream clean-embed proxy error for ${u.host}, redirecting to direct embed:`, fetchErr.message);
+      return res.redirect(302, embedUrl);
+    }
 
     if (!fetchRes.ok) {
-      return res.status(fetchRes.status).send(`Upstream embed error: ${fetchRes.statusText}`);
+      return res.redirect(302, embedUrl);
     }
 
     let html = await fetchRes.text();

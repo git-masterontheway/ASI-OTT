@@ -429,12 +429,8 @@ function setupDirectStreamPlayback(autoPlay = true) {
     }, { once: true });
     switchToCustomPlayer(autoPlay);
 
-  } else if (!isM3u8 && seriesData.embedUrl && (seriesData.directStreamUrl.includes('.mkv') || !seriesData.directStreamUrl.includes('.mp4'))) {
-    // Matroska container fallback: initialize clean embed player
-    switchToEmbedPlayer();
-
   } else {
-    // Direct MP4 or proxied video stream
+    // Direct video stream (MP4, MKV/WebM supported container, or proxied stream)
     customVideo.src = streamEndpoint;
     customVideo.load();
     populateAudioTracks();
@@ -508,7 +504,12 @@ function switchToEmbedPlayer() {
   customVideo.pause();
   customVideo.style.display = 'none';
   embedIframe.removeAttribute('sandbox');
-  embedIframe.src = `${API_BASE}/api/clean-embed?url=${encodeURIComponent(seriesData.embedUrl)}`;
+  embedIframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
+  if (seriesData.embedUrl.includes('playmate.to')) {
+    embedIframe.src = seriesData.embedUrl;
+  } else {
+    embedIframe.src = `${API_BASE}/api/clean-embed?url=${encodeURIComponent(seriesData.embedUrl)}`;
+  }
   embedIframe.style.display = 'block';
   if (tapZoneLeft) tapZoneLeft.style.display = 'none';
   if (tapZoneRight) tapZoneRight.style.display = 'none';

@@ -3,7 +3,7 @@
  * Backend API Base Configuration:
  * Directly connects to Vercel backend when hosted on custom domain (asiott.xo.je).
  */
-const VERCEL_BACKEND = 'https://asiott.vercel.app';
+const VERCEL_BACKEND = 'https://asi-ott.vercel.app';
 const API_BASE = '';
 
 /**
@@ -306,26 +306,46 @@ function renderSeriesGrid(items) {
 }
 
 /**
- * Pagination Controls
+ * Render Responsive Floating Glass OTT Pagination Controls
  */
 function renderPagination(pagination) {
-  if (!pagination || pagination.totalPages <= 1 || currentSearchQuery) {
+  if (!pagination || !pagination.totalPages || pagination.totalPages <= 1) {
+    paginationWrapper.style.display = 'none';
     paginationWrapper.innerHTML = '';
     return;
   }
 
-  const cur = pagination.currentPage;
-  const total = pagination.totalPages;
-  let html = `<div class="pagination-controls">`;
+  paginationWrapper.style.display = 'flex';
+  paginationWrapper.innerHTML = '';
 
-  // Previous Button
+  const cur = pagination.currentPage || 1;
+  const total = pagination.totalPages || 1;
+
+  let html = `
+    <div class="pagination-header-info">
+      <span class="pagination-badge">
+        <i class="fa-solid fa-layer-group"></i> Page <strong>${cur}</strong> of <strong>${total}</strong>
+      </span>
+    </div>
+    <div class="pagination-controls">
+  `;
+
+  // Previous Page Button
   if (cur > 1) {
-    html += `<button class="page-btn page-arrow" onclick="loadContentPage(${cur - 1})"><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
+    html += `
+      <button class="page-btn page-arrow" onclick="handlePageNav(${cur - 1})" title="Go to Previous Page">
+        <i class="fa-solid fa-chevron-left"></i> <span>Prev</span>
+      </button>
+    `;
   } else {
-    html += `<button class="page-btn page-arrow disabled" disabled><i class="fa-solid fa-chevron-left"></i> Prev</button>`;
+    html += `
+      <button class="page-btn page-arrow disabled" disabled title="Previous Page">
+        <i class="fa-solid fa-chevron-left"></i> <span>Prev</span>
+      </button>
+    `;
   }
 
-  // Numbered pages
+  // Calculate clean range of pages to show
   const pagesToShow = [];
   pagesToShow.push(1);
 
@@ -333,29 +353,52 @@ function renderPagination(pagination) {
   let end = Math.min(total - 1, cur + 2);
 
   if (start > 2) pagesToShow.push('dots1');
-  for (let i = start; i <= end; i++) pagesToShow.push(i);
+  for (let i = start; i <= end; i++) {
+    pagesToShow.push(i);
+  }
   if (end < total - 1) pagesToShow.push('dots2');
   if (total > 1) pagesToShow.push(total);
 
   pagesToShow.forEach(p => {
     if (typeof p === 'string') {
-      html += `<span class="page-dots">...</span>`;
-    } else if (p === cur) {
-      html += `<button class="page-btn active" disabled>${p}</button>`;
+      html += `<span class="page-dots"><i class="fa-solid fa-ellipsis"></i></span>`;
     } else {
-      html += `<button class="page-btn" onclick="loadContentPage(${p})">${p}</button>`;
+      html += `
+        <button class="page-btn page-num ${p === cur ? 'active' : ''}" onclick="handlePageNav(${p})" title="Page ${p}">
+          ${p}
+        </button>
+      `;
     }
   });
 
-  // Next Button
+  // Next Page Button
   if (cur < total) {
-    html += `<button class="page-btn page-arrow" onclick="loadContentPage(${cur + 1})">Next <i class="fa-solid fa-chevron-right"></i></button>`;
+    html += `
+      <button class="page-btn page-arrow" onclick="handlePageNav(${cur + 1})" title="Go to Next Page">
+        <span>Next</span> <i class="fa-solid fa-chevron-right"></i>
+      </button>
+    `;
   } else {
-    html += `<button class="page-btn page-arrow disabled" disabled>Next <i class="fa-solid fa-chevron-right"></i></button>`;
+    html += `
+      <button class="page-btn page-arrow disabled" disabled title="Next Page">
+        <span>Next</span> <i class="fa-solid fa-chevron-right"></i>
+      </button>
+    `;
   }
 
   html += `</div>`;
   paginationWrapper.innerHTML = html;
+}
+
+/**
+ * Handle Pagination Navigation with Smooth Grid Auto-Scroll
+ */
+function handlePageNav(page) {
+  loadContentPage(page);
+  const section = document.getElementById('series-section') || document.querySelector('.main-wrapper');
+  if (section) {
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 /**
