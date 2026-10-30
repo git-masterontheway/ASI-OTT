@@ -3,7 +3,7 @@
  * Backend API Base Configuration:
  * Directly connects to Vercel backend when hosted on custom domain (asiott.xo.je).
  */
-const RENDER_BACKEND = 'https://asi-ott.onrender.com';
+const RENDER_BACKEND = 'https://asi-ott-7c3v.onrender.com';
 const VERCEL_BACKEND = 'https://asi-ott.vercel.app';
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   ? ''
