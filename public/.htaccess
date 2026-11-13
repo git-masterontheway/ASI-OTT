@@ -3,8 +3,9 @@
   RewriteEngine On
   RewriteBase /
 
-  # Rewrite /watch to /watch.html with query parameters preserved
+  # Rewrite /watch and /movies with query parameters preserved
   RewriteRule ^watch/?$ watch.html [L,QSA]
+  RewriteRule ^movies/?$ movies.html [L,QSA]
 </IfModule>
 
 # MIME Types for Video Streaming & Subtitles

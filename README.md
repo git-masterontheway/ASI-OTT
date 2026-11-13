@@ -41,7 +41,7 @@ You can access and test the live running deployment of ASI OTT through any of th
    *Serverless edge deployment powered by Vercel for fast global asset delivery.*
 
 3. **Alternative Mirror (Render Web Service):**  
-   👉 [**https://asi-ott.onrender.com**](https://asi-ott.onrender.com/)  
+   👉 [**https://asi-ott-7c3v.onrender.com**](https://asi-ott-7c3v.onrender.com/)  
    *Persistent backend container on Render with automated scraping memory caching.*
 
 > **Note on Service Availability:**  

@@ -27,7 +27,9 @@ const allowedOrigins = [
   'http://www.asiott.xo.je',
   'http://localhost:3000',
   'http://localhost:3001',
-  'http://localhost:3002'
+  'http://localhost:3002',
+  'https://asi-ott-7c3v.onrender.com',
+  'https://asi-ott-j3br.onrender.com'
 ];
 
 const corsOptions = {
@@ -74,29 +76,9 @@ app.get(['/health', '/api/health'], (req, res) => {
 const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'asi_data') : path.join(__dirname, 'data');
 const VIEWS_FILE = path.join(DATA_DIR, 'views.json');
 
-// Dynamic real-time scraping with fallback seed & post cache for cloud resilience (Render / Vercel Cloudflare bypass)
-let MICROTV_SEED_CATALOG = [];
-let MICROTV_PAGES_CATALOG = {};
-let MICROTV_POSTS_CACHE = {};
-try {
-  const seedPath = path.join(__dirname, 'data', 'microtv_seed.json');
-  if (fs.existsSync(seedPath)) {
-    MICROTV_SEED_CATALOG = JSON.parse(fs.readFileSync(seedPath, 'utf8') || '[]');
-    console.log(`[MicroTV Seed] Loaded ${MICROTV_SEED_CATALOG.length} seed catalog items`);
-  }
-  const pagesPath = path.join(__dirname, 'data', 'microtv_pages.json');
-  if (fs.existsSync(pagesPath)) {
-    MICROTV_PAGES_CATALOG = JSON.parse(fs.readFileSync(pagesPath, 'utf8') || '{}');
-    console.log(`[MicroTV Pages] Loaded ${Object.keys(MICROTV_PAGES_CATALOG).length} pages of catalog items`);
-  }
-  const cachePath = path.join(__dirname, 'data', 'microtv_posts_cache.json');
-  if (fs.existsSync(cachePath)) {
-    MICROTV_POSTS_CACHE = JSON.parse(fs.readFileSync(cachePath, 'utf8') || '{}');
-    console.log(`[MicroTV Cache] Loaded ${Object.keys(MICROTV_POSTS_CACHE).length} pre-resolved posts`);
-  }
-} catch (e) {
-  console.warn('[MicroTV Cache] Failed to load static seed/cache:', e.message);
-}
+// High-performance real-time in-memory caching for live referer scraping (Zero static JSON dependency)
+const MICROTV_INMEMORY_PAGES = new Map();
+const MICROTV_INMEMORY_POSTS = new Map();
 
 // Ensure data folder exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -932,86 +914,158 @@ const MICROTV_CRAWLER_HEADERS = {
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'en-US,en;q=0.9'
 };
+const MICROTV_BING_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9'
+};
+const MICROTV_MOBILE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9'
+};
 
-const MICROTV_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes standard cache
-const MICROTV_PAGE1_CACHE_TTL_MS = 30 * 1000; // 30 seconds for page 1 so newly uploaded dramas appear immediately!
+const MICROTV_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes standard cache for older pages
+const MICROTV_PAGE1_CACHE_TTL_MS = 25 * 1000; // 25 seconds for page 1 so newly uploaded dramas appear immediately
+const MICROTV_IN_FLIGHT_FETCHES = new Map();
 
 /**
  * Dynamic live fetcher for m.microtv.st with concurrent anti-blocking strategies.
- * Seamlessly resolves in sub-second time on local machines and cloud hosting environments (Render / Vercel).
+ * High-speed live scraping with zero static JSON dependencies.
  */
 async function fetchMicroTvHtml(targetUrl, forceRefresh = false) {
   if (!targetUrl) return null;
   const isPage1 = !targetUrl.includes('page=') || targetUrl.includes('page=1');
   const cacheTtl = isPage1 ? MICROTV_PAGE1_CACHE_TTL_MS : MICROTV_CACHE_TTL_MS;
 
-  if (!forceRefresh) {
-    const cached = MICROTV_CACHE.get(targetUrl);
-    if (cached && cached.expiresAt > Date.now()) {
+  const cached = MICROTV_CACHE.get(targetUrl);
+  if (!forceRefresh && cached) {
+    if (cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+    // Stale-while-revalidate: return recent cached copy immediately while refreshing in background
+    if (cached.data && Date.now() - cached.timestamp < 10 * 60 * 1000) {
+      if (!MICROTV_IN_FLIGHT_FETCHES.has(targetUrl)) {
+        fetchMicroTvHtml(targetUrl, true).catch(() => {});
+      }
       return cached.data;
     }
   }
 
-  const activeMicro = await getActiveMicroTvBase();
-
-  const fetchers = [
-    // Strategy 1: Direct fetch with browser headers (Fastest for local / broadband IPs, ~200ms)
-    async () => {
-      const res = await fetch(targetUrl, {
-        headers: {
-          ...COMMON_HEADERS,
-          'Referer': `${activeMicro}/`
-        },
-        signal: AbortSignal.timeout(3500)
-      });
-      if (!res.ok) throw new Error(`Direct status ${res.status}`);
-      const text = await res.text();
-      if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
-        throw new Error('Direct challenged');
-      }
-      return text;
-    },
-
-    // Strategy 2: Cloudflare Workers edge reader (markdown.new) with retain_images (Universal bypass on Render, ~800ms)
-    async () => {
-      const r = await fetch('https://markdown.new/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: targetUrl, retain_images: true }),
-        signal: AbortSignal.timeout(6500)
-      });
-      if (!r.ok) throw new Error(`markdown.new status ${r.status}`);
-      const json = await r.json();
-      const content = json.content || '';
-      if (content.length < 200) throw new Error('markdown.new empty content');
-      return content;
-    },
-
-    // Strategy 3: markdown.new GET fallback
-    async () => {
-      const r = await fetch('https://markdown.new/' + targetUrl, { signal: AbortSignal.timeout(6000) });
-      if (!r.ok) throw new Error(`markdown.new GET status ${r.status}`);
-      const text = await r.text();
-      if (text.length < 200) throw new Error('markdown.new GET empty');
-      return text;
-    }
-  ];
-
-  try {
-    const content = await Promise.any(fetchers.map(fn => fn()));
-    if (content && content.length > 200) {
-      MICROTV_CACHE.set(targetUrl, { data: content, expiresAt: Date.now() + cacheTtl });
-      return content;
-    }
-  } catch (err) {
-    console.warn('[MicroTV Scraper] All live fetch strategies failed for:', targetUrl);
+  // Deduplicate concurrent requests for the exact same target URL
+  if (MICROTV_IN_FLIGHT_FETCHES.has(targetUrl)) {
+    return MICROTV_IN_FLIGHT_FETCHES.get(targetUrl);
   }
 
-  return null;
+  const fetchPromise = (async () => {
+    const activeMicro = await getActiveMicroTvBase();
+
+    const fetchers = [
+      // Strategy 1: Direct fetch with Googlebot crawler headers (Bypasses Cloudflare on datacenter IPs, ~200-800ms)
+      async () => {
+        const res = await fetch(targetUrl, {
+          headers: {
+            ...MICROTV_CRAWLER_HEADERS,
+            'Referer': `${activeMicro}/`
+          },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (!res.ok) throw new Error(`Crawler status ${res.status}`);
+        const text = await res.text();
+        if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
+          throw new Error('Crawler challenged');
+        }
+        return text;
+      },
+
+      // Strategy 2: Direct fetch with Bingbot crawler headers
+      async () => {
+        const res = await fetch(targetUrl, {
+          headers: {
+            ...MICROTV_BING_HEADERS,
+            'Referer': `${activeMicro}/`
+          },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (!res.ok) throw new Error(`Bingbot status ${res.status}`);
+        const text = await res.text();
+        if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
+          throw new Error('Bingbot challenged');
+        }
+        return text;
+      },
+
+      // Strategy 3: Direct fetch with Mobile browser headers
+      async () => {
+        const res = await fetch(targetUrl, {
+          headers: {
+            ...MICROTV_MOBILE_HEADERS,
+            'Referer': `${activeMicro}/`
+          },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (!res.ok) throw new Error(`Mobile status ${res.status}`);
+        const text = await res.text();
+        if (text.includes('Just a moment...') || text.includes('Checking your browser') || text.length < 500) {
+          throw new Error('Mobile challenged');
+        }
+        return text;
+      },
+
+      // Strategy 4: Cloudflare Workers edge reader (markdown.new) with retain_images
+      async () => {
+        const r = await fetch('https://markdown.new/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: targetUrl, retain_images: true }),
+          signal: AbortSignal.timeout(7000)
+        });
+        if (!r.ok) throw new Error(`markdown.new status ${r.status}`);
+        const json = await r.json();
+        const content = json.content || '';
+        if (content.length < 200) throw new Error('markdown.new empty content');
+        return content;
+      },
+
+      // Strategy 5: markdown.new GET fallback
+      async () => {
+        const r = await fetch('https://markdown.new/' + targetUrl, { signal: AbortSignal.timeout(7000) });
+        if (!r.ok) throw new Error(`markdown.new GET status ${r.status}`);
+        const text = await r.text();
+        if (text.length < 200) throw new Error('markdown.new GET empty');
+        return text;
+      }
+    ];
+
+    try {
+      const content = await Promise.any(fetchers.map(fn => fn()));
+      if (content && content.length > 200) {
+        MICROTV_CACHE.set(targetUrl, {
+          data: content,
+          timestamp: Date.now(),
+          expiresAt: Date.now() + cacheTtl
+        });
+        return content;
+      }
+    } catch (err) {
+      console.warn('[MicroTV Scraper] All live fetch strategies failed for:', targetUrl);
+    }
+
+    return cached?.data || null;
+  })();
+
+  MICROTV_IN_FLIGHT_FETCHES.set(targetUrl, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    MICROTV_IN_FLIGHT_FETCHES.delete(targetUrl);
+  }
 }
 
 function parseMicroTvCards(html) {
+  if (!html) return [];
   const cards = [];
+  const seenSlugs = new Set();
 
   // 1. Try HTML post-card extraction
   const cardRegex = /<div\s+class=["']post-card["']>([\s\S]*?)<\/div>/gi;
@@ -1022,6 +1076,7 @@ function parseMicroTvCards(html) {
     const linkMatch = cardHtml.match(/<a\s+[^>]*href=["'](?:https?:\/\/(?:m|new)\.microtv\.st)?\/post\/([a-zA-Z0-9_-]+)["']/i) ||
       cardHtml.match(/<a\s+[^>]*href=["']\/post\/([a-zA-Z0-9_-]+)["']/i);
     const slug = linkMatch ? linkMatch[1] : null;
+    if (!slug || seenSlugs.has(slug)) continue;
 
     const imgMatch = cardHtml.match(/<img[^>]+?\bsrc=["']([^"']+)["']/i);
     const thumbnail = imgMatch ? imgMatch[1] : '';
@@ -1037,21 +1092,20 @@ function parseMicroTvCards(html) {
     const rawViews = viewsMatch ? viewsMatch[1].replace(/<[^>]+>/g, '').trim() : '1800';
     const views = formatViewCount(rawViews);
 
-    if (slug) {
-      cards.push({
-        id: `microtv_${slug}`,
-        slug,
-        title: title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-        thumbnail,
-        views,
-        source: 'MicroTV',
-        category: 'Mini Drama',
-        quality: 'HD Stream'
-      });
-    }
+    seenSlugs.add(slug);
+    cards.push({
+      id: `microtv_${slug}`,
+      slug,
+      title: title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      thumbnail: thumbnail || 'https://m.microtv.st/assets/images/placeholder.jpg',
+      views,
+      source: 'MicroTV',
+      category: 'Mini Drama',
+      quality: 'HD Stream'
+    });
   }
 
-  // 2. If no cards found from HTML, parse from Markdown format (from Cloudflare edge reader on Render)
+  // 2. If no cards found from HTML, parse from Markdown format (from Cloudflare edge reader)
   if (cards.length === 0) {
     const mdRegex = /\[\s*!\[([^\]]*)\]\(([^)]+)\)\s*([^👁️\n\[\]]+?)\s*(?:👁️\s*([0-9,]+)\s*views)?\s*\]\((?:https?:\/\/[^\/]+)?\/post\/([a-zA-Z0-9_-]+)\)/gi;
     let mdMatch;
@@ -1061,14 +1115,40 @@ function parseMicroTvCards(html) {
       let textTitle = mdMatch[3] ? mdMatch[3].trim() : '';
       const rawViews = mdMatch[4] || '1800';
       const slug = mdMatch[5];
+      if (!slug || seenSlugs.has(slug)) continue;
+
       let title = cleanTitle(altTitle || textTitle || slug);
-      if (slug && !cards.some(c => c.slug === slug)) {
+      seenSlugs.add(slug);
+      cards.push({
+        id: `microtv_${slug}`,
+        slug,
+        title: title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        thumbnail: thumbnail || 'https://m.microtv.st/assets/images/placeholder.jpg',
+        views: formatViewCount(rawViews),
+        source: 'MicroTV',
+        category: 'Mini Drama',
+        quality: 'HD Stream'
+      });
+    }
+
+    if (cards.length === 0) {
+      const altMdRegex = /!\[([^\]]*)\]\((https?:\/\/[^\)]+)\)[\s\S]*?\[([^\]]+)\]\((?:https?:\/\/[^\/]+)?\/post\/([a-zA-Z0-9_-]+)\)/gi;
+      let altMatch;
+      while ((altMatch = altMdRegex.exec(html)) !== null) {
+        const altTitle = altMatch[1];
+        const thumbnail = altMatch[2] || '';
+        const linkText = altMatch[3];
+        const slug = altMatch[4];
+        if (!slug || seenSlugs.has(slug)) continue;
+
+        const title = cleanTitle(altTitle || linkText || slug);
+        seenSlugs.add(slug);
         cards.push({
           id: `microtv_${slug}`,
           slug,
           title: title || slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-          thumbnail,
-          views: formatViewCount(rawViews),
+          thumbnail: thumbnail || 'https://m.microtv.st/assets/images/placeholder.jpg',
+          views: '1.8K views',
           source: 'MicroTV',
           category: 'Mini Drama',
           quality: 'HD Stream'
@@ -1080,24 +1160,25 @@ function parseMicroTvCards(html) {
   return cards;
 }
 
-let KNOWN_MICROTV_TOTAL_PAGES = 35;
+let KNOWN_MICROTV_TOTAL_PAGES = 36;
 
 function parsePagination(html, requestedPage) {
   const curPage = parseInt(requestedPage, 10) || 1;
   const pageNumbers = new Set();
   pageNumbers.add(curPage);
 
-  // Scan all page query occurrences across the HTML to find the maximum published page (e.g. 33+)
-  const pageMatches = [...html.matchAll(/[?&]page=([0-9]+)/gi)];
-  pageMatches.forEach(m => {
-    const num = parseInt(m[1], 10);
-    if (!isNaN(num) && num > 0 && num < 1000) {
-      pageNumbers.add(num);
-      if (num > KNOWN_MICROTV_TOTAL_PAGES) {
-        KNOWN_MICROTV_TOTAL_PAGES = num;
+  if (html) {
+    const pageMatches = [...html.matchAll(/[?&]page=([0-9]+)/gi)];
+    pageMatches.forEach(m => {
+      const num = parseInt(m[1], 10);
+      if (!isNaN(num) && num > 0 && num < 1000) {
+        pageNumbers.add(num);
+        if (num > KNOWN_MICROTV_TOTAL_PAGES) {
+          KNOWN_MICROTV_TOTAL_PAGES = num;
+        }
       }
-    }
-  });
+    });
+  }
 
   const totalPages = Math.max(KNOWN_MICROTV_TOTAL_PAGES, curPage);
   for (let i = 1; i <= Math.min(totalPages, 5); i++) {
@@ -1110,8 +1191,8 @@ function parsePagination(html, requestedPage) {
   return {
     currentPage: curPage,
     totalPages,
-    hasNext: curPage < totalPages || html.includes('Next »') || html.includes('Next'),
-    hasPrev: curPage > 1 || html.includes('« Previous') || html.includes('Previous'),
+    hasNext: curPage < totalPages || (html && (html.includes('Next »') || html.includes('Next'))),
+    hasPrev: curPage > 1 || (html && (html.includes('« Previous') || html.includes('Previous'))),
     pages: sortedPages
   };
 }
@@ -1602,46 +1683,19 @@ app.get('/api/content', async (req, res) => {
         allItems = parseMicroTvCards(html);
         pagination = parsePagination(html, page);
         if (allItems.length > 0) {
-          MICROTV_PAGES_CATALOG[String(page)] = allItems;
-          // Dynamically prepend newly uploaded dramas to catalog
-          if (page === 1) {
-            const existingSlugs = new Set(MICROTV_SEED_CATALOG.map(s => s.slug));
-            const newItems = allItems.filter(item => !existingSlugs.has(item.slug));
-            if (newItems.length > 0) {
-              MICROTV_SEED_CATALOG.unshift(...newItems);
-              console.log(`[MicroTV] Successfully detected ${newItems.length} newly uploaded drama(s) from referer!`);
-            }
-          }
+          MICROTV_INMEMORY_PAGES.set(String(page), allItems);
         }
       }
 
-      // Cloud deployment fallback (Render / Vercel Cloudflare challenge resilience)
-      if (allItems.length === 0 && (MICROTV_PAGES_CATALOG[String(page)] || MICROTV_SEED_CATALOG.length > 0)) {
-        const pageKey = String(page);
-        if (MICROTV_PAGES_CATALOG[pageKey]) {
-          allItems = MICROTV_PAGES_CATALOG[pageKey];
-        } else {
-          const pageSize = 50;
-          const start = (page - 1) * pageSize;
-          allItems = MICROTV_SEED_CATALOG.slice(start, start + pageSize);
-        }
-
-        const totalPages = Math.max(35, Object.keys(MICROTV_PAGES_CATALOG).length, Math.ceil(MICROTV_SEED_CATALOG.length / 50));
-        const curPage = Math.min(Math.max(1, page), totalPages);
-
-        const pageNumbers = new Set();
-        pageNumbers.add(curPage);
-        for (let i = 1; i <= Math.min(totalPages, 5); i++) pageNumbers.add(i);
-        if (curPage > 1) pageNumbers.add(curPage - 1);
-        if (curPage < totalPages) pageNumbers.add(curPage + 1);
-        pageNumbers.add(totalPages);
-
+      // If live network momentarily returned 0 cards, use recent in-memory cache
+      if (allItems.length === 0 && MICROTV_INMEMORY_PAGES.has(String(page))) {
+        allItems = MICROTV_INMEMORY_PAGES.get(String(page));
         pagination = {
-          currentPage: curPage,
-          totalPages: totalPages,
-          hasNext: curPage < totalPages,
-          hasPrev: curPage > 1,
-          pages: Array.from(pageNumbers).sort((a, b) => a - b)
+          currentPage: page,
+          totalPages: KNOWN_MICROTV_TOTAL_PAGES,
+          hasNext: page < KNOWN_MICROTV_TOTAL_PAGES,
+          hasPrev: page > 1,
+          pages: [1, 2, 3, 4, 5, KNOWN_MICROTV_TOTAL_PAGES]
         };
       }
     } else if (categoryFilter === 'movies' || categoryFilter === 'bollywood' || categoryFilter === 'hollywood' || categoryFilter === 'south' || categoryFilter === 'south_movies' || categoryFilter === 'korean' || categoryFilter === 'korean_movies' || categoryFilter === 'web_series' || categoryFilter === 'new_releases') {
@@ -1731,7 +1785,7 @@ app.get('/api/content', async (req, res) => {
       // Default: Interleaved Aggregation across MicroTV, Movies4u & HDWall
       const microTvUrl = page > 1 ? `${MICROTV_BASE}/?page=${page}` : `${MICROTV_BASE}/`;
       const [microHtml, m4uItems, hdwallItems] = await Promise.allSettled([
-        fetchMicroTvHtml(microTvUrl, page === 1),
+        fetchMicroTvHtml(microTvUrl, false),
         fetchMovies4uHome(page),
         fetchHdwallHome(page)
       ]);
@@ -1740,16 +1794,16 @@ app.get('/api/content', async (req, res) => {
       if (microHtml.status === 'fulfilled' && microHtml.value) {
         microItems = parseMicroTvCards(microHtml.value);
         pagination = parsePagination(microHtml.value, page);
+        if (microItems.length > 0) {
+          MICROTV_INMEMORY_PAGES.set(String(page), microItems);
+        }
       }
 
-      // Cloud deployment fallback: Ensure Mini Drama appears on homepage even if live scrape returns 0 on Render
-      if (microItems.length === 0 && MICROTV_SEED_CATALOG.length > 0) {
-        const pageSize = 8;
-        const offset = ((page - 1) * pageSize) % MICROTV_SEED_CATALOG.length;
-        microItems = MICROTV_SEED_CATALOG.slice(offset, offset + pageSize);
-        if (microItems.length < pageSize) {
-          microItems = microItems.concat(MICROTV_SEED_CATALOG.slice(0, pageSize - microItems.length));
-        }
+      // If live scrape momentarily returned 0 cards, use recent in-memory cache
+      if (microItems.length === 0 && MICROTV_INMEMORY_PAGES.has(String(page))) {
+        microItems = MICROTV_INMEMORY_PAGES.get(String(page));
+      } else if (microItems.length === 0 && MICROTV_INMEMORY_PAGES.has('1')) {
+        microItems = MICROTV_INMEMORY_PAGES.get('1').slice(0, 8);
       }
 
       const m4uList = m4uItems.status === 'fulfilled' ? m4uItems.value : [];
@@ -1876,17 +1930,8 @@ app.get('/api/search', async (req, res) => {
           ? `${MICROTV_BASE}/?search=${encodeURIComponent(query)}&page=${page}`
           : `${MICROTV_BASE}/?search=${encodeURIComponent(query)}`;
         const html = await fetchMicroTvHtml(searchUrl);
-        let items = html ? parseMicroTvCards(html) : [];
-        if (items.length === 0 && MICROTV_SEED_CATALOG.length > 0) {
-          const q = query.toLowerCase();
-          items = MICROTV_SEED_CATALOG.filter(it => it.title.toLowerCase().includes(q) || it.slug.toLowerCase().includes(q));
-        }
-        return items;
+        return html ? parseMicroTvCards(html) : [];
       } catch (e) {
-        if (MICROTV_SEED_CATALOG.length > 0) {
-          const q = query.toLowerCase();
-          return MICROTV_SEED_CATALOG.filter(it => it.title.toLowerCase().includes(q) || it.slug.toLowerCase().includes(q));
-        }
         return [];
       }
     })();
@@ -2543,12 +2588,21 @@ app.get('/api/post', async (req, res) => {
     } else {
       // ---------------- MicroTV Detail Handler (Pure Live Scraping) ----------------
       const cleanSlug = slug.replace(/^\/+|\/+$/g, '');
+
+      // Check runtime memory cache first for instant sub-millisecond response
+      if (MICROTV_INMEMORY_POSTS.has(cleanSlug)) {
+        return res.json({
+          ...MICROTV_INMEMORY_POSTS.get(cleanSlug),
+          clientIp: getClientIp(req)
+        });
+      }
+
       const postUrl = `${MICROTV_BASE}/post/${encodeURIComponent(cleanSlug)}`;
       let html = await fetchMicroTvHtml(postUrl);
 
       if (!html) {
         try {
-          const searchHtml = await fetchMicroTvHtml(`${MICROTV_BASE}/search?q=${encodeURIComponent(cleanSlug.replace(/[-_]/g, ' '))}`);
+          const searchHtml = await fetchMicroTvHtml(`${MICROTV_BASE}/?search=${encodeURIComponent(cleanSlug.replace(/[-_]/g, ' '))}`);
           if (searchHtml) {
             const postMatch = searchHtml.match(/<a\s+[^>]*href=["'](?:https?:\/\/(?:m|new)\.microtv\.st)?\/post\/([^"']+)["']/i);
             if (postMatch) {
@@ -2561,48 +2615,6 @@ app.get('/api/post', async (req, res) => {
       }
 
       if (!html) {
-        // Fallback to pre-resolved post cache (Essential for Render / Vercel cloud environments)
-        const cachedPost = MICROTV_POSTS_CACHE[cleanSlug] ||
-          Object.values(MICROTV_POSTS_CACHE).find(p => p.slug === cleanSlug || p.title?.toLowerCase().includes(cleanSlug.replace(/[-_]/g, ' ').toLowerCase()));
-        if (cachedPost) {
-          return res.json({
-            ...cachedPost,
-            clientIp: getClientIp(req),
-            isCachedCloudFallback: true
-          });
-        }
-
-        // If not in pre-resolved cache, check if item exists in MICROTV_SEED_CATALOG
-        const seedItem = MICROTV_SEED_CATALOG.find(it => it.slug === cleanSlug || it.id === `microtv_${cleanSlug}`);
-        if (seedItem) {
-          const title = seedItem.title;
-          const poster = seedItem.thumbnail;
-          return res.json({
-            success: true,
-            slug: cleanSlug,
-            source: 'MicroTV',
-            category: 'Mini Drama',
-            title,
-            poster,
-            embedUrl: '',
-            downloadPhpUrl: '',
-            directStreamUrl: null,
-            isPlayable: true,
-            aspectRatio: 'vertical',
-            actualMediaFileName: `${title}.mkv`,
-            mediaFileSize: null,
-            qualities: [
-              { quality: '480p', size: '450MB', cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=480p&type=cloud_direct` },
-              { quality: '720p', size: '1.2GB', cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=720p&type=cloud_direct` },
-              { quality: '1080p', size: '2.9GB', cloudDirectUrl: `/api/cloud-direct-download?title=${encodeURIComponent(title)}&quality=1080p&type=cloud_direct` }
-            ],
-            originalViews: seedItem.views || '2.8K views',
-            publishDate: 'Recent',
-            clientIp: getClientIp(req),
-            isCachedCloudFallback: true
-          });
-        }
-
         return res.status(404).json({ success: false, error: 'Series not found on MicroTV' });
       }
 
@@ -2617,10 +2629,6 @@ app.get('/api/post', async (req, res) => {
         html.match(/<img[^>]+class=["'][^"']*featured-poster[^"']*["'][^>]+?\bsrc=["']([^"']+)["']/i) ||
         html.match(/!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i);
       let poster = posterMatch ? posterMatch[1] : '';
-      if (!poster) {
-        const seedItem = MICROTV_SEED_CATALOG.find(it => it.slug === cleanSlug || it.id === `microtv_${cleanSlug}`);
-        if (seedItem && seedItem.thumbnail) poster = seedItem.thumbnail;
-      }
 
       // Video Embed Player iframe src
       const iframeMatch = html.match(/<div class=["']embed-player["'][\s\S]*?<iframe\s+[^>]*src=["']([^"']+)["']/i) ||
@@ -2701,7 +2709,7 @@ app.get('/api/post', async (req, res) => {
         }
       ];
 
-      res.json({
+      const postResponse = {
         success: true,
         slug,
         source: 'MicroTV',
@@ -2718,6 +2726,13 @@ app.get('/api/post', async (req, res) => {
         qualities,
         originalViews: '2.8K views',
         publishDate: 'Recent'
+      };
+
+      MICROTV_INMEMORY_POSTS.set(cleanSlug, postResponse);
+
+      res.json({
+        ...postResponse,
+        clientIp: getClientIp(req)
       });
     }
   } catch (err) {
@@ -3186,6 +3201,11 @@ function startServer(port) {
     console.log(`Home / Search:             http://${host}:${port}`);
     console.log(`Watch Page:                http://${host}:${port}/watch`);
     console.log(`===============================================`);
+
+    // Asynchronously pre-warm Page 1 of MicroTV in memory for instant 0ms first request
+    fetchMicroTvHtml(`${MICROTV_BASE}/`).then(() => {
+      console.log('[MicroTV] Pre-warmed Page 1 live catalog successfully in memory!');
+    }).catch(() => {});
   });
 
   server.on('error', (err) => {

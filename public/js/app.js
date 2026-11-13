@@ -5,7 +5,13 @@
  */
 const RENDER_BACKEND = 'https://asi-ott-j3br.onrender.com';
 const VERCEL_BACKEND = 'https://asi-ott.vercel.app';
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+const API_BASE = (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.endsWith('onrender.com') ||
+  window.location.hostname.endsWith('vercel.app') ||
+  window.location.origin === RENDER_BACKEND
+)
   ? ''
   : RENDER_BACKEND;
 
